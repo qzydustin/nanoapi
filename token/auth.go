@@ -10,7 +10,6 @@ import (
 type TokenContext struct {
 	TokenID   string
 	TokenName string
-	Status    string
 }
 
 // Service provides static token authentication from config.
@@ -25,7 +24,6 @@ func NewService(tokens []config.TokenConfig) *Service {
 		byKey[tok.Key] = &TokenContext{
 			TokenID:   tok.ID,
 			TokenName: tok.Name,
-			Status:    "active",
 		}
 	}
 	return &Service{byKey: byKey}
