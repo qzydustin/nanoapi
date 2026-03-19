@@ -1,5 +1,7 @@
 package canonical
 
+import "encoding/json"
+
 // Stream event type constants.
 const (
 	EventTextDelta         = "text_delta"
@@ -8,6 +10,9 @@ const (
 	EventToolCallStart     = "tool_call_start"
 	EventToolCallDelta     = "tool_call_delta"
 	EventToolCallEnd       = "tool_call_end"
+	EventRawBlockStart     = "raw_block_start"
+	EventRawBlockDelta     = "raw_block_delta"
+	EventRawBlockStop      = "raw_block_stop"
 	EventMessageStop       = "message_stop"
 	EventUsageFinal        = "usage_final"
 )
@@ -29,6 +34,9 @@ type CanonicalStreamEvent struct {
 
 	// tool_call_delta
 	ArgumentsDelta string
+
+	// raw_block_start / raw_block_delta / raw_block_stop
+	RawJSON json.RawMessage
 
 	// message_stop
 	StopReason string

@@ -61,29 +61,50 @@ func (d *AnthropicStreamDecoder) DecodeLine(eventType string, data string) ([]ca
 
 	case "content_block_start":
 		var block struct {
-			Index        int `json:"index"`
-			ContentBlock struct {
-				Type string `json:"type"`
-				ID   string `json:"id,omitempty"`
-				Name string `json:"name,omitempty"`
-			} `json:"content_block"`
+			Index        int             `json:"index"`
+			ContentBlock json.RawMessage `json:"content_block"`
 		}
 		if err := json.Unmarshal([]byte(data), &block); err != nil {
 			return nil, fmt.Errorf("decode content_block_start: %w", err)
 		}
-		d.currentBlockType = block.ContentBlock.Type
+
+		var blockHeader struct {
+			Type string `json:"type"`
+			ID   string `json:"id,omitempty"`
+			Name string `json:"name,omitempty"`
+		}
+		json.Unmarshal(block.ContentBlock, &blockHeader)
+
+		d.currentBlockType = blockHeader.Type
 		d.currentBlockIdx = block.Index
 
-		if block.ContentBlock.Type == "tool_use" {
+		switch blockHeader.Type {
+		case "tool_use":
 			events = append(events, canonical.CanonicalStreamEvent{
 				Type:         canonical.EventToolCallStart,
-				ToolCallID:   block.ContentBlock.ID,
-				ToolCallName: block.ContentBlock.Name,
+				ToolCallID:   blockHeader.ID,
+				ToolCallName: blockHeader.Name,
+			})
+		case "text", "thinking":
+			// No start event needed, deltas suffice.
+		default:
+			events = append(events, canonical.CanonicalStreamEvent{
+				Type:    canonical.EventRawBlockStart,
+				RawJSON: []byte(data),
 			})
 		}
-		// text and thinking blocks: no start event needed, deltas suffice.
 
 	case "content_block_delta":
+		// Pass unrecognised block types through as-is.
+		if d.currentBlockType != "text" && d.currentBlockType != "thinking" &&
+			d.currentBlockType != "tool_use" {
+			events = append(events, canonical.CanonicalStreamEvent{
+				Type:    canonical.EventRawBlockDelta,
+				RawJSON: []byte(data),
+			})
+			break
+		}
+
 		var delta struct {
 			Delta struct {
 				Type      string `json:"type"`
@@ -128,6 +149,11 @@ func (d *AnthropicStreamDecoder) DecodeLine(eventType string, data string) ([]ca
 		if d.currentBlockType == "tool_use" {
 			events = append(events, canonical.CanonicalStreamEvent{
 				Type: canonical.EventToolCallEnd,
+			})
+		} else if d.currentBlockType != "text" && d.currentBlockType != "thinking" {
+			events = append(events, canonical.CanonicalStreamEvent{
+				Type:    canonical.EventRawBlockStop,
+				RawJSON: []byte(data),
 			})
 		}
 		d.currentBlockType = ""
@@ -284,6 +310,21 @@ func (e *AnthropicStreamEncoder) Encode(event canonical.CanonicalStreamEvent) st
 
 	case canonical.EventToolCallEnd:
 		e.closeBlock(&lines)
+
+	case canonical.EventRawBlockStart:
+		e.closeBlock(&lines)
+		lines = append(lines, "event: content_block_start\ndata: " + string(event.RawJSON) + "\n\n")
+		e.blockOpen = true
+		e.blockType = "raw"
+
+	case canonical.EventRawBlockDelta:
+		lines = append(lines, "event: content_block_delta\ndata: " + string(event.RawJSON) + "\n\n")
+
+	case canonical.EventRawBlockStop:
+		lines = append(lines, "event: content_block_stop\ndata: " + string(event.RawJSON) + "\n\n")
+		e.blockOpen = false
+		e.blockType = ""
+		e.blockIdx++
 
 	case canonical.EventMessageStop:
 		e.closeBlock(&lines)

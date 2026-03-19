@@ -15,6 +15,7 @@ type StreamAggregateState struct {
 	TextParts     []string
 	ThinkingParts []string
 	ToolCalls     []*toolCallState
+	RawBlocks     []*rawBlockState
 	StopReason    string
 	Usage         *canonical.CanonicalUsage
 }
@@ -24,6 +25,12 @@ type toolCallState struct {
 	ID   string
 	Name string
 	Args strings.Builder
+}
+
+// rawBlockState tracks a passthrough block accumulated from streaming.
+type rawBlockState struct {
+	ContentBlock json.RawMessage
+	Deltas       []json.RawMessage
 }
 
 // Apply processes a single canonical stream event into the aggregate state.
@@ -53,6 +60,21 @@ func (s *StreamAggregateState) Apply(event canonical.CanonicalStreamEvent) {
 		}
 	case canonical.EventToolCallEnd:
 		// Nothing to do; the tool call is already accumulated.
+	case canonical.EventRawBlockStart:
+		var envelope struct {
+			ContentBlock json.RawMessage `json:"content_block"`
+		}
+		json.Unmarshal(event.RawJSON, &envelope)
+		s.RawBlocks = append(s.RawBlocks, &rawBlockState{
+			ContentBlock: envelope.ContentBlock,
+		})
+	case canonical.EventRawBlockDelta:
+		if len(s.RawBlocks) > 0 {
+			s.RawBlocks[len(s.RawBlocks)-1].Deltas = append(
+				s.RawBlocks[len(s.RawBlocks)-1].Deltas, event.RawJSON)
+		}
+	case canonical.EventRawBlockStop:
+		// Nothing to do; the block is finalized in Finalize().
 	case canonical.EventMessageStop:
 		s.StopReason = event.StopReason
 	case canonical.EventUsageFinal:
@@ -96,6 +118,19 @@ func (s *StreamAggregateState) Finalize() *canonical.CanonicalResponse {
 		})
 	}
 
+	// Raw passthrough blocks.
+	for _, rb := range s.RawBlocks {
+		finalBlock := finalizeRawBlock(rb)
+		var header struct {
+			Type string `json:"type"`
+		}
+		json.Unmarshal(finalBlock, &header)
+		blocks = append(blocks, canonical.CanonicalContentBlock{
+			Type:    header.Type,
+			RawJSON: finalBlock,
+		})
+	}
+
 	// Text output.
 	if len(s.TextParts) > 0 {
 		text := strings.Join(s.TextParts, "")
@@ -131,4 +166,47 @@ func (s *StreamAggregateState) Finalize() *canonical.CanonicalResponse {
 			{Role: "assistant", Content: blocks},
 		},
 	}
+}
+
+// finalizeRawBlock merges input_json_delta partial_json values into the
+// content_block's input field.
+func finalizeRawBlock(rb *rawBlockState) json.RawMessage {
+	if len(rb.Deltas) == 0 {
+		return rb.ContentBlock
+	}
+
+	var inputBuf strings.Builder
+	for _, d := range rb.Deltas {
+		var delta struct {
+			Delta struct {
+				Type        string `json:"type"`
+				PartialJSON string `json:"partial_json,omitempty"`
+			} `json:"delta"`
+		}
+		if json.Unmarshal(d, &delta) == nil && delta.Delta.Type == "input_json_delta" {
+			inputBuf.WriteString(delta.Delta.PartialJSON)
+		}
+	}
+
+	if inputBuf.Len() == 0 {
+		return rb.ContentBlock
+	}
+
+	// Merge accumulated input into the content_block.
+	var input any
+	if json.Unmarshal([]byte(inputBuf.String()), &input) != nil {
+		return rb.ContentBlock
+	}
+
+	var block map[string]any
+	if json.Unmarshal(rb.ContentBlock, &block) != nil {
+		return rb.ContentBlock
+	}
+	block["input"] = input
+
+	merged, err := json.Marshal(block)
+	if err != nil {
+		return rb.ContentBlock
+	}
+	return merged
 }

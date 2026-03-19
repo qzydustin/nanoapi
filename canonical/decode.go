@@ -515,6 +515,15 @@ func decodeAnthropicContent(raw json.RawMessage) ([]CanonicalContentBlock, error
 				Type:     "thinking",
 				Thinking: &CanonicalThinkingBlock{Text: strPtr(b.Thinking)},
 			})
+
+		default:
+			raw, err := json.Marshal(b)
+			if err == nil {
+				result = append(result, CanonicalContentBlock{
+					Type:    b.Type,
+					RawJSON: raw,
+				})
+			}
 		}
 	}
 	return result, nil

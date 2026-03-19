@@ -201,7 +201,7 @@ func anthropicThinkingAllowsBudget(thinking *anthropicOutThinking) bool {
 }
 
 func encodeAnthropicMessage(m canonical.CanonicalMessage) anthropicOutMsg {
-	var blocks []anthropicOutBlock
+	var blocks []any
 
 	for _, b := range m.Content {
 		switch b.Type {
@@ -237,6 +237,10 @@ func encodeAnthropicMessage(m canonical.CanonicalMessage) anthropicOutMsg {
 			if b.Thinking != nil && b.Thinking.Text != nil {
 				blocks = append(blocks, anthropicOutBlock{Type: "thinking", Thinking: *b.Thinking.Text})
 			}
+		default:
+			if len(b.RawJSON) > 0 {
+				blocks = append(blocks, json.RawMessage(b.RawJSON))
+			}
 		}
 	}
 
@@ -246,8 +250,10 @@ func encodeAnthropicMessage(m canonical.CanonicalMessage) anthropicOutMsg {
 		role = "user"
 	}
 
-	if len(blocks) == 1 && blocks[0].Type == "text" {
-		return anthropicOutMsg{Role: role, Content: blocks[0].Text}
+	if len(blocks) == 1 {
+		if ob, ok := blocks[0].(anthropicOutBlock); ok && ob.Type == "text" {
+			return anthropicOutMsg{Role: role, Content: ob.Text}
+		}
 	}
 	return anthropicOutMsg{Role: role, Content: blocks}
 }
@@ -309,13 +315,13 @@ func encodeAnthropicImage(img *canonical.CanonicalImage) *anthropicOutImgSrc {
 // ---------------------------------------------------------------------------
 
 type anthropicResponse struct {
-	ID         string               `json:"id"`
-	Type       string               `json:"type"`
-	Model      string               `json:"model"`
-	Role       string               `json:"role"`
-	Content    []anthropicRespBlock `json:"content"`
-	StopReason *string              `json:"stop_reason,omitempty"`
-	Usage      *anthropicUsage      `json:"usage,omitempty"`
+	ID         string              `json:"id"`
+	Type       string              `json:"type"`
+	Model      string              `json:"model"`
+	Role       string              `json:"role"`
+	Content    []json.RawMessage   `json:"content"`
+	StopReason *string             `json:"stop_reason,omitempty"`
+	Usage      *anthropicUsage     `json:"usage,omitempty"`
 }
 
 type anthropicRespBlock struct {
@@ -356,13 +362,24 @@ func DecodeAnthropicResponse(body []byte) (*canonical.CanonicalResponse, error) 
 	}
 
 	var blocks []canonical.CanonicalContentBlock
-	for _, b := range raw.Content {
-		switch b.Type {
+	for _, rawBlock := range raw.Content {
+		var header struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(rawBlock, &header); err != nil {
+			continue
+		}
+
+		switch header.Type {
 		case "text":
+			var b anthropicRespBlock
+			json.Unmarshal(rawBlock, &b)
 			blocks = append(blocks, canonical.CanonicalContentBlock{
 				Type: "text", Text: strPtr(b.Text),
 			})
 		case "tool_use":
+			var b anthropicRespBlock
+			json.Unmarshal(rawBlock, &b)
 			blocks = append(blocks, canonical.CanonicalContentBlock{
 				Type: "tool_call",
 				ToolCall: &canonical.CanonicalToolCall{
@@ -372,9 +389,16 @@ func DecodeAnthropicResponse(body []byte) (*canonical.CanonicalResponse, error) 
 				},
 			})
 		case "thinking":
+			var b anthropicRespBlock
+			json.Unmarshal(rawBlock, &b)
 			blocks = append(blocks, canonical.CanonicalContentBlock{
 				Type:     "thinking",
 				Thinking: &canonical.CanonicalThinkingBlock{Text: strPtr(b.Thinking), Signature: strPtr(b.Signature)},
+			})
+		default:
+			blocks = append(blocks, canonical.CanonicalContentBlock{
+				Type:    header.Type,
+				RawJSON: rawBlock,
 			})
 		}
 	}
@@ -415,13 +439,13 @@ func DecodeAnthropicResponse(body []byte) (*canonical.CanonicalResponse, error) 
 // ---------------------------------------------------------------------------
 
 type anthropicClientResp struct {
-	ID         string                 `json:"id"`
-	Type       string                 `json:"type"`
-	Role       string                 `json:"role"`
-	Model      string                 `json:"model"`
-	Content    []anthropicClientBlock `json:"content"`
-	StopReason string                 `json:"stop_reason"`
-	Usage      *anthropicClientUsage  `json:"usage,omitempty"`
+	ID         string                `json:"id"`
+	Type       string                `json:"type"`
+	Role       string                `json:"role"`
+	Model      string                `json:"model"`
+	Content    []any                 `json:"content"`
+	StopReason string                `json:"stop_reason"`
+	Usage      *anthropicClientUsage `json:"usage,omitempty"`
 }
 
 type anthropicClientBlock struct {
@@ -486,6 +510,10 @@ func EncodeAnthropicClientResponse(resp *canonical.CanonicalResponse) ([]byte, e
 						block.Signature = *b.Thinking.Signature
 					}
 					out.Content = append(out.Content, block)
+				}
+			default:
+				if len(b.RawJSON) > 0 {
+					out.Content = append(out.Content, b.RawJSON)
 				}
 			}
 		}

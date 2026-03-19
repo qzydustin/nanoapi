@@ -1,5 +1,7 @@
 package canonical
 
+import "encoding/json"
+
 // CanonicalMessage is one turn in the conversation.
 type CanonicalMessage struct {
 	Role    string // "system", "user", "assistant", "tool"
@@ -15,6 +17,9 @@ type CanonicalContentBlock struct {
 	ToolCall   *CanonicalToolCall
 	ToolResult *CanonicalToolResult
 	Thinking   *CanonicalThinkingBlock
+
+	// RawJSON preserves unrecognised block types verbatim for passthrough.
+	RawJSON json.RawMessage
 }
 
 // CanonicalImage stores image data in a protocol-neutral way.
