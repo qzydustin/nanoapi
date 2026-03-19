@@ -40,9 +40,8 @@ func UsageSummaryHandler(usageSvc *usage.Service) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"token_id":   tc.TokenID,
-			"token_name": tc.TokenName,
-			"summary":    s,
+			"token_id": tc.TokenID,
+			"summary":  s,
 		})
 	}
 }
@@ -64,9 +63,8 @@ func UsageLogsHandler(usageSvc *usage.Service) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"token_id":   tc.TokenID,
-			"token_name": tc.TokenName,
-			"records":    records,
+			"token_id": tc.TokenID,
+			"records":  records,
 		})
 	}
 }

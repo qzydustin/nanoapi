@@ -23,7 +23,7 @@ func validConfig() *Config {
 			DSN:    "./test.db",
 		},
 		Tokens: []TokenConfig{
-			{ID: "tok_default", Name: "default", Key: "nk_test_token"},
+			{ID: "tok_default", Key: "nk_test_token"},
 		},
 		Providers: []ProviderConfig{
 			{
@@ -152,10 +152,9 @@ func TestValidate_TokenErrors(t *testing.T) {
 	}{
 		{"no tokens", func(c *Config) { c.Tokens = nil }, "at least one token"},
 		{"empty token id", func(c *Config) { c.Tokens[0].ID = "" }, "id must not be empty"},
-		{"empty token name", func(c *Config) { c.Tokens[0].Name = "" }, "name must not be empty"},
 		{"empty token key", func(c *Config) { c.Tokens[0].Key = "" }, "key must not be empty"},
 		{"duplicate token id", func(c *Config) {
-			c.Tokens = append(c.Tokens, TokenConfig{ID: "tok_default", Name: "other", Key: "nk_other"})
+			c.Tokens = append(c.Tokens, TokenConfig{ID: "tok_default", Key: "nk_other"})
 		}, "duplicate id"},
 	}
 

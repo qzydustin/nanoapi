@@ -41,7 +41,7 @@ func newTestEnv(t *testing.T, upstreamHandler http.HandlerFunc) *testEnv {
 		Logging: config.LoggingConfig{RequestDir: t.TempDir()},
 		Storage: config.StorageConfig{Driver: "sqlite", DSN: ":memory:"},
 		Tokens: []config.TokenConfig{
-			{ID: "tok_default", Name: "default", Key: "nk_test_token"},
+			{ID: "tok_default", Key: "nk_test_token"},
 		},
 		Providers: []config.ProviderConfig{
 			{

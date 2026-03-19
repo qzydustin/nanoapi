@@ -21,7 +21,6 @@ storage:
 
 tokens:
   - id: default
-    name: default
     key: nk_test_token
 
 providers:

@@ -48,9 +48,6 @@ func Validate(cfg *Config) error {
 		if strings.TrimSpace(t.ID) == "" {
 			return fmt.Errorf("%s: id must not be empty", prefix)
 		}
-		if strings.TrimSpace(t.Name) == "" {
-			return fmt.Errorf("%s: name must not be empty", prefix)
-		}
 		if strings.TrimSpace(t.Key) == "" {
 			return fmt.Errorf("%s: key must not be empty", prefix)
 		}

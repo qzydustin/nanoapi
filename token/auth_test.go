@@ -8,8 +8,8 @@ import (
 
 func testService() *Service {
 	return NewService([]config.TokenConfig{
-		{ID: "tok_1", Name: "default", Key: "nk_test123"},
-		{ID: "tok_2", Name: "other", Key: "nk_other456"},
+		{ID: "tok_1", Key: "nk_test123"},
+		{ID: "tok_2", Key: "nk_other456"},
 	})
 }
 
@@ -22,9 +22,6 @@ func TestAuthenticateConfiguredToken(t *testing.T) {
 	}
 	if ctx.TokenID != "tok_1" {
 		t.Errorf("token_id = %q", ctx.TokenID)
-	}
-	if ctx.TokenName != "default" {
-		t.Errorf("token_name = %q", ctx.TokenName)
 	}
 }
 

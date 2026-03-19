@@ -29,9 +29,8 @@ type StorageConfig struct {
 
 // TokenConfig declares one static API token loaded from config.
 type TokenConfig struct {
-	ID   string `yaml:"id"`
-	Name string `yaml:"name"`
-	Key  string `yaml:"key"`
+	ID  string `yaml:"id"`
+	Key string `yaml:"key"`
 }
 
 // ProviderConfig describes one upstream AI provider.

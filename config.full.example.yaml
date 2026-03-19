@@ -17,10 +17,8 @@ storage:
 tokens:
   # Static API tokens used for both model access and /api self-query.
   - id: default
-    name: default
     key: nk_replace_me
   - id: internal
-    name: internal
     key: nk_replace_me_too
 
 providers:

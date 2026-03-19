@@ -8,8 +8,7 @@ import (
 
 // TokenContext is the authentication context carried through the request pipeline.
 type TokenContext struct {
-	TokenID   string
-	TokenName string
+	TokenID string
 }
 
 // Service provides static token authentication from config.
@@ -22,8 +21,7 @@ func NewService(tokens []config.TokenConfig) *Service {
 	byKey := make(map[string]*TokenContext, len(tokens))
 	for _, tok := range tokens {
 		byKey[tok.Key] = &TokenContext{
-			TokenID:   tok.ID,
-			TokenName: tok.Name,
+			TokenID: tok.ID,
 		}
 	}
 	return &Service{byKey: byKey}
