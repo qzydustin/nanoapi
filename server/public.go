@@ -480,6 +480,13 @@ func streamOpenAIToClient(scanner *bufio.Scanner, flusher http.Flusher, w io.Wri
 				usageResult = ev.Usage
 			}
 			if !webSearchInjected && hasWebSearch && anthEnc != nil && ev.Type == canonical.EventTextDelta && ev.Text != "" {
+				// Ensure message_start is emitted before synthetic blocks.
+				msgStart := anthEnc.Encode(canonical.CanonicalStreamEvent{
+					Type: canonical.EventTextDelta, ResponseID: ev.ResponseID, Model: ev.Model,
+				})
+				if msgStart != "" {
+					fmt.Fprint(w, msgStart)
+				}
 				sse, n := codec.SynthesizeWebSearchSSE(anthEnc.BlockIdx())
 				fmt.Fprint(w, sse)
 				anthEnc.AdvanceBlockIdx(n)
