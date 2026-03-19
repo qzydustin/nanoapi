@@ -5,6 +5,10 @@ server:
   host: 0.0.0.0
   port: 8080
 
+logging:
+  debug: false
+  request_dir: /app/data/request-logs
+
 storage:
   # SQLite is the only supported storage backend at the moment.
   driver: sqlite
@@ -50,10 +54,31 @@ providers:
     # If true, non-stream client requests may still use upstream streaming internally.
     force_stream: true
     models:
-      # client model name -> upstream model name
-      claude-haiku-4-5-20251001: claude-haiku-4-5-20251001
-      claude-opus-4-6: claude-opus-4-6
-      gpt-4o-mini: claude-haiku-4-5-20251001
+      # client model name -> upstream model config
+      claude-haiku-4-5-20251001:
+        upstream: claude-haiku-4-5-20251001
+        reasoning:
+          allowed_efforts:
+            - low
+            - medium
+            - high
+            - max
+      claude-opus-4-6:
+        upstream: claude-opus-4-6
+        reasoning:
+          allowed_efforts:
+            - low
+            - medium
+            - high
+            - max
+      gpt-4o-mini:
+        upstream: claude-haiku-4-5-20251001
+        reasoning:
+          allowed_efforts:
+            - low
+            - medium
+            - high
+            - max
     override:
       defaults:
         # Provider-level parameter overrides applied after provider selection.
@@ -83,11 +108,41 @@ providers:
       OpenAI-Organization: org_replace_me
     force_stream: false
     models:
-      gpt-4o-mini: gpt-4o-mini
-      gpt-5.4: gpt-5.4
-      claude-haiku-4-5-20251001: gpt-5.4
-      claude-opus-4-6: gpt-5.4
-      claude-sonnet-4-6: gpt-5.4
+      gpt-4o-mini:
+        upstream: gpt-4o-mini
+        reasoning:
+          allowed_efforts:
+            - low
+            - medium
+            - high
+      gpt-5.4:
+        upstream: gpt-5.4
+        reasoning:
+          allowed_efforts:
+            - low
+            - medium
+            - high
+      claude-haiku-4-5-20251001:
+        upstream: gpt-5.4
+        reasoning:
+          allowed_efforts:
+            - low
+            - medium
+            - high
+      claude-opus-4-6:
+        upstream: gpt-5.4
+        reasoning:
+          allowed_efforts:
+            - low
+            - medium
+            - high
+      claude-sonnet-4-6:
+        upstream: gpt-5.4
+        reasoning:
+          allowed_efforts:
+            - low
+            - medium
+            - high
     override:
       defaults:
         max_tokens: 4096

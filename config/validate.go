@@ -24,6 +24,9 @@ func Validate(cfg *Config) error {
 	if cfg.Server.Port <= 0 || cfg.Server.Port > 65535 {
 		return fmt.Errorf("server.port must be between 1 and 65535")
 	}
+	if strings.TrimSpace(cfg.Logging.RequestDir) == "" {
+		return fmt.Errorf("logging.request_dir must not be empty")
+	}
 	// --- storage ---
 	if cfg.Storage.Driver == "" {
 		return fmt.Errorf("storage.driver must not be empty")
@@ -87,13 +90,25 @@ func Validate(cfg *Config) error {
 		if len(p.Models) == 0 {
 			return fmt.Errorf("%s: models must not be empty", prefix)
 		}
-
-		for clientModel, upstreamModel := range p.Models {
+		for clientModel, target := range p.Models {
 			if strings.TrimSpace(clientModel) == "" {
 				return fmt.Errorf("%s: model key must not be empty", prefix)
 			}
-			if strings.TrimSpace(upstreamModel) == "" {
+			if strings.TrimSpace(target.Upstream) == "" {
 				return fmt.Errorf("%s: model value for %q must not be empty", prefix, clientModel)
+			}
+			if target.Reasoning != nil {
+				seenEfforts := make(map[string]struct{})
+				for idx, effort := range target.Reasoning.AllowedEfforts {
+					normalized := strings.ToLower(strings.TrimSpace(effort))
+					if normalized == "" {
+						return fmt.Errorf("%s: models[%q].reasoning.allowed_efforts[%d] must not be empty", prefix, clientModel, idx)
+					}
+					if _, ok := seenEfforts[normalized]; ok {
+						return fmt.Errorf("%s: models[%q].reasoning has duplicate effort %q", prefix, clientModel, normalized)
+					}
+					seenEfforts[normalized] = struct{}{}
+				}
 			}
 
 			// Priority ambiguity check.

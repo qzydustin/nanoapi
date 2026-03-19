@@ -22,6 +22,9 @@ func LoadConfig(path string) (*Config, error) {
 	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
 		return nil, fmt.Errorf("parse config file: %w", err)
 	}
+	if cfg.Logging.RequestDir == "" {
+		cfg.Logging.RequestDir = "logs/requests"
+	}
 
 	return &cfg, nil
 }

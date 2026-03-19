@@ -3,6 +3,7 @@ package config
 // Config is the top-level runtime configuration for nanoapi.
 type Config struct {
 	Server    ServerConfig     `yaml:"server"`
+	Logging   LoggingConfig    `yaml:"logging"`
 	Storage   StorageConfig    `yaml:"storage"`
 	Tokens    []TokenConfig    `yaml:"tokens"`
 	Providers []ProviderConfig `yaml:"providers"`
@@ -12,6 +13,12 @@ type Config struct {
 type ServerConfig struct {
 	Host string `yaml:"host"`
 	Port int    `yaml:"port"`
+}
+
+// LoggingConfig controls runtime logging behavior.
+type LoggingConfig struct {
+	Debug      bool   `yaml:"debug"`
+	RequestDir string `yaml:"request_dir"`
 }
 
 // StorageConfig holds persistence backend settings.
@@ -37,8 +44,29 @@ type ProviderConfig struct {
 	Headers     map[string]string `yaml:"headers"`
 	ForceStream bool              `yaml:"force_stream"`
 
-	Models   map[string]string `yaml:"models"`
-	Override ProviderOverride  `yaml:"override"`
+	Models   map[string]ModelTargetConfig `yaml:"models"`
+	Override ProviderOverride             `yaml:"override"`
+}
+
+// ModelTargetConfig describes how one client-facing model maps to a specific
+// upstream model and what reasoning features that upstream target supports.
+//
+// Example:
+//
+//	models:
+//	  claude-opus-4-6:
+//	    upstream: bedrock-claude-4-6-opus
+//	    reasoning:
+//	      allowed_efforts: [low, medium, high]
+type ModelTargetConfig struct {
+	Upstream  string               `yaml:"upstream"`
+	Reasoning *ReasoningCapability `yaml:"reasoning,omitempty"`
+}
+
+// ReasoningCapability declares protocol-facing reasoning support for one
+// upstream target model. Values here are target-model capabilities, not user intent.
+type ReasoningCapability struct {
+	AllowedEfforts []string `yaml:"allowed_efforts"`
 }
 
 // OverrideParams holds typed request parameter overrides.
