@@ -14,21 +14,16 @@ type StreamAggregateState struct {
 	Model         string
 	TextParts     []string
 	ThinkingParts []string
-	ToolCalls     []*ToolCallState
+	ToolCalls     []*toolCallState
 	StopReason    string
 	Usage         *canonical.CanonicalUsage
 }
 
-// ToolCallState tracks a single tool call being accumulated from streaming.
-type ToolCallState struct {
+// toolCallState tracks a single tool call being accumulated from streaming.
+type toolCallState struct {
 	ID   string
 	Name string
 	Args strings.Builder
-}
-
-// NewStreamAggregateState creates a new aggregation state.
-func NewStreamAggregateState() *StreamAggregateState {
-	return &StreamAggregateState{}
 }
 
 // Apply processes a single canonical stream event into the aggregate state.
@@ -48,7 +43,7 @@ func (s *StreamAggregateState) Apply(event canonical.CanonicalStreamEvent) {
 	case canonical.EventThinkingDelta:
 		s.ThinkingParts = append(s.ThinkingParts, event.Text)
 	case canonical.EventToolCallStart:
-		s.ToolCalls = append(s.ToolCalls, &ToolCallState{
+		s.ToolCalls = append(s.ToolCalls, &toolCallState{
 			ID:   event.ToolCallID,
 			Name: event.ToolCallName,
 		})
