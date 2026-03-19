@@ -1,159 +1,55 @@
 # nanoapi
 
-`nanoapi` is a lightweight LLM gateway that routes requests to different upstream providers from a single config file and records internal usage / logs.
-
-Supported endpoints:
-
-- OpenAI Chat Completions compatible endpoint: `/v1/chat/completions`
-- Anthropic Messages compatible endpoint: `/v1/messages`
-- Gateway API endpoints:
-  - `/api/health`
-  - `/api/usage`
-  - `/api/logs`
+Lightweight LLM gateway — single config file, multi-provider routing, built-in usage tracking.
 
 ## Features
 
-- Provider selection by `model`, with `priority` used when multiple providers match
-- Support for `openai_chat` and `anthropic_messages`
-- Streaming, non-streaming, and `force_stream` aggregation
-- OpenAI / Anthropic protocol translation
-- Static token configuration from `config.yaml`
-- SQLite persistence for usage / logs
+- **Protocol translation** — clients speak OpenAI or Anthropic; upstream can be either
+- **Model aliasing** — map any client model name to any upstream model (e.g. `gpt-4o-mini` → `claude-haiku-4-5-20251001`)
+- **Priority routing** — when multiple providers serve the same model, highest priority wins
+- **Reasoning control** — per-provider / per-model override of thinking mode, budget tokens, effort level; per-model allowed effort whitelist
+- **Force-stream aggregation** — optionally stream upstream even for non-stream client requests, then reassemble the response
+- **Web search passthrough** — translate built-in web search tools across protocols (`openai` native or `openwebui` feature flag)
+- **Usage & logs** — SQLite-backed per-request tracking: tokens, cache, reasoning, latency, status
+- **Debug logging** — optional full request/response packet dump to per-request log files
 
-## Configuration
+## Endpoints
 
-Create `config.yaml` from the example:
+| Path | Description |
+|---|---|
+| `/v1/chat/completions` | OpenAI Chat Completions compatible |
+| `/v1/messages` | Anthropic Messages compatible |
+| `/api/health` | Health check |
+| `/api/usage` | Per-token usage stats |
+| `/api/logs` | Request logs |
+
+## Quick Start
 
 ```bash
 cp config.example.yaml config.yaml
-```
-
-Fill in at least:
-
-- `tokens[].key`
-- `providers[].api_key`
-- optionally `logging.debug` if you want full request/response packet logs
-
-For Docker Compose, the default SQLite path is `/app/data/nanoapi.db`.
-Provider overrides use `override.defaults` and optional ordered `override.rules`.
-
-### Logging
-
-```yaml
-logging:
-  debug: false
-  request_dir: logs/requests
-```
-
-- `debug: false`
-  - prints compact terminal logs such as `access | ...`, `reasoning | ...`, and `upstream_result | ...`
-- `debug: true`
-  - still keeps compact terminal logs
-  - additionally writes full request / response packets to `logs/requests/<request_id>.log`
-  - includes raw upstream SSE lines for streaming requests
-- `request_dir`
-  - controls where per-request debug files are written
-  - use a persistent path such as `/app/data/request-logs` in Docker
-
-## Run Locally
-
-```bash
+# fill in tokens[].key and providers[].api_key
 go run . ./config.yaml
 ```
 
-Or:
-
-```bash
-go build -o nanoapi .
-./nanoapi ./config.yaml
-```
-
-## Docker Compose
+Docker Compose:
 
 ```bash
 docker compose up --build -d
 ```
 
-View logs:
+## Configuration
 
-```bash
-docker compose logs -f nanoapi
-```
+See [config.example.yaml](config.example.yaml) for a minimal setup and [config.full.example.yaml](config.full.example.yaml) for all supported fields.
 
-Stop:
+Key sections:
 
-```bash
-docker compose down
-```
-
-## API Examples
-
-```bash
-curl http://127.0.0.1:8080/api/health
-```
-
-```bash
-curl http://127.0.0.1:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer nk_replace_me" \
-  -d '{
-    "model": "claude-haiku-4-5-20251001",
-    "messages": [
-      {"role": "user", "content": "hello"}
-    ]
-  }'
-```
-
-```bash
-curl http://127.0.0.1:8080/v1/messages \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer nk_replace_me" \
-  -d '{
-    "model": "claude-haiku-4-5-20251001",
-    "max_tokens": 256,
-    "messages": [
-      {"role": "user", "content": "hello"}
-    ]
-  }'
-```
-
-```bash
-curl http://127.0.0.1:8080/api/usage \
-  -H "Authorization: Bearer nk_replace_me"
-```
-
-```bash
-curl http://127.0.0.1:8080/api/logs \
-  -H "Authorization: Bearer nk_replace_me"
-```
-
-## Claude Code Request Shape
-
-When Claude Code sends requests to `nanoapi` through the Anthropic Messages endpoint, the request usually contains these signals:
-
-- `/effort`
-  - Claude Code exposes four effort levels: `low`, `medium`, `high`, `max`
-  - This appears in the request body as `output_config.effort`
-
-- Thinking switch
-  - When thinking is enabled, Claude Code sends `thinking.type = "adaptive"`
-  - When thinking is disabled, Claude Code does not send `thinking.type`
-
-- `1M context`
-  - This appears in the request headers as `Anthropic-Beta: ... context-1m-2025-08-07 ...`
-
-## Database
-
-The database is used only for usage / log persistence: token ID, timestamp, client / upstream protocol, client / upstream model, token usage, cache usage, reasoning tokens, success / error code, and latency.
-
-Tokens, providers, and API keys are loaded from `config.yaml`.
+- **tokens** — static API keys for client authentication
+- **providers** — upstream backends with protocol, base_url, api_key, priority, model map, and parameter overrides
+- **override.defaults / override.rules** — provider-level and per-model parameter overrides (max_tokens, temperature, reasoning, etc.)
+- **logging** — `debug: true` writes full packets to `request_dir`
 
 ## Testing
 
 ```bash
 go test ./...
 ```
-
-## Current Scope
-
-This project currently follows a config-driven gateway model: no admin web UI, no dynamic token CRUD API, and configuration changes are applied by editing `config.yaml` and restarting the service.
