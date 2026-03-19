@@ -441,6 +441,7 @@ func handlePassthroughStream(c *gin.Context, clientProto, upstreamProto canonica
 
 	var usageResult *canonical.CanonicalUsage
 	scanner := bufio.NewScanner(result.StreamReader)
+	scanner.Buffer(make([]byte, 0, 64*1024), execute.MaxSSELineSize)
 
 	switch upstreamProto {
 	case canonical.ProtocolOpenAIChat:

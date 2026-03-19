@@ -19,6 +19,10 @@ const (
 	ModePassthroughStream ExecutionMode = "passthrough_stream"
 	ModeDirectNonStream   ExecutionMode = "direct_non_stream"
 	ModeAggregateStream   ExecutionMode = "aggregate_stream"
+
+	// MaxSSELineSize is the max buffer for upstream SSE lines (default 64KB is
+	// too small for OpenWebUI sources events).
+	MaxSSELineSize = 1024 * 1024
 )
 
 // DecideMode determines the execution mode based on client streaming
@@ -136,6 +140,7 @@ func (e *Executor) Execute(ctx context.Context, plan *ExecutionPlan) (*Execution
 func (e *Executor) aggregateStream(protocol canonical.Protocol, body io.Reader) (*canonical.CanonicalResponse, error) {
 	state := &StreamAggregateState{}
 	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 64*1024), MaxSSELineSize)
 
 	switch protocol {
 	case canonical.ProtocolOpenAIChat:
