@@ -227,6 +227,9 @@ func NewAnthropicStreamEncoder() *AnthropicStreamEncoder {
 	return &AnthropicStreamEncoder{}
 }
 
+func (e *AnthropicStreamEncoder) BlockIdx() int      { return e.blockIdx }
+func (e *AnthropicStreamEncoder) AdvanceBlockIdx(n int) { e.blockIdx += n }
+
 // Encode converts a canonical stream event into Anthropic SSE line(s).
 func (e *AnthropicStreamEncoder) Encode(event canonical.CanonicalStreamEvent) string {
 	var lines []string

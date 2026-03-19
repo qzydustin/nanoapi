@@ -44,6 +44,7 @@ type ExecutionPlan struct {
 	Headers          map[string]string
 	Body             []byte
 	Stream           bool // actual upstream stream flag
+	HasWebSearch     bool // request includes a web_search tool
 }
 
 // ExecutionResult is the outcome of executing an upstream request.

@@ -174,6 +174,13 @@ func ProxyHandler(
 		logReasoning(requestID, req, upstreamProtocol, reasoningCapability)
 
 		// 7. Build execution plan.
+		hasWebSearch := false
+		for _, t := range req.Tools {
+			if t.Type == "web_search" {
+				hasWebSearch = true
+				break
+			}
+		}
 		plan := &execute.ExecutionPlan{
 			Mode:             mode,
 			ClientProtocol:   clientProtocol,
@@ -182,6 +189,7 @@ func ProxyHandler(
 			Headers:          execute.BuildHeaders(selection.Provider, upstreamProtocol, upstreamStream),
 			Body:             encodedBody,
 			Stream:           upstreamStream,
+			HasWebSearch:     hasWebSearch,
 		}
 		if reqLog != nil && reqLog.debug {
 			lines := []string{
@@ -236,13 +244,13 @@ func ProxyHandler(
 
 		switch mode {
 		case execute.ModeDirectNonStream:
-			respUsage = handleDirectNonStream(c, clientProtocol, upstreamProtocol, result, reqLog)
+			respUsage = handleDirectNonStream(c, clientProtocol, upstreamProtocol, hasWebSearch, result, reqLog)
 
 		case execute.ModeAggregateStream:
-			respUsage = handleAggregateStream(c, clientProtocol, result, reqLog)
+			respUsage = handleAggregateStream(c, clientProtocol, upstreamProtocol, hasWebSearch, result, reqLog)
 
 		case execute.ModePassthroughStream:
-			respUsage = handlePassthroughStream(c, clientProtocol, upstreamProtocol, result, reqLog)
+			respUsage = handlePassthroughStream(c, clientProtocol, upstreamProtocol, hasWebSearch, result, reqLog)
 		}
 
 		// 10. Record usage (non-fatal).
@@ -343,7 +351,7 @@ func logReasoning(
 	))
 }
 
-func handleDirectNonStream(c *gin.Context, clientProto, upstreamProto canonical.Protocol, result *execute.ExecutionResult, reqLog *requestLogger) *canonical.CanonicalUsage {
+func handleDirectNonStream(c *gin.Context, clientProto, upstreamProto canonical.Protocol, hasWebSearch bool, result *execute.ExecutionResult, reqLog *requestLogger) *canonical.CanonicalUsage {
 	// Decode upstream response.
 	var resp *canonical.CanonicalResponse
 	var err error
@@ -367,6 +375,8 @@ func handleDirectNonStream(c *gin.Context, clientProto, upstreamProto canonical.
 		reqLog.WriteSection("upstream_response_body", string(result.Body))
 	}
 
+	injectWebSearchBlocks(resp, hasWebSearch, clientProto, upstreamProto)
+
 	// Encode for client.
 	var clientBody []byte
 	switch clientProto {
@@ -384,7 +394,7 @@ func handleDirectNonStream(c *gin.Context, clientProto, upstreamProto canonical.
 	return resp.Usage
 }
 
-func handleAggregateStream(c *gin.Context, clientProto canonical.Protocol, result *execute.ExecutionResult, reqLog *requestLogger) *canonical.CanonicalUsage {
+func handleAggregateStream(c *gin.Context, clientProto, upstreamProto canonical.Protocol, hasWebSearch bool, result *execute.ExecutionResult, reqLog *requestLogger) *canonical.CanonicalUsage {
 	resp := result.AggregatedResponse
 	if resp == nil {
 		respondError(c, clientProto, http.StatusBadGateway, "empty aggregated response")
@@ -393,6 +403,8 @@ func handleAggregateStream(c *gin.Context, clientProto canonical.Protocol, resul
 	if reqLog != nil && reqLog.debug {
 		reqLog.WriteSection("upstream_response_full", "mode: aggregate_stream")
 	}
+
+	injectWebSearchBlocks(resp, hasWebSearch, clientProto, upstreamProto)
 
 	var clientBody []byte
 	var err error
@@ -411,7 +423,7 @@ func handleAggregateStream(c *gin.Context, clientProto canonical.Protocol, resul
 	return resp.Usage
 }
 
-func handlePassthroughStream(c *gin.Context, clientProto, upstreamProto canonical.Protocol, result *execute.ExecutionResult, reqLog *requestLogger) *canonical.CanonicalUsage {
+func handlePassthroughStream(c *gin.Context, clientProto, upstreamProto canonical.Protocol, hasWebSearch bool, result *execute.ExecutionResult, reqLog *requestLogger) *canonical.CanonicalUsage {
 	if result.StreamReader == nil {
 		respondError(c, clientProto, http.StatusBadGateway, "no stream reader")
 		return nil
@@ -432,7 +444,7 @@ func handlePassthroughStream(c *gin.Context, clientProto, upstreamProto canonica
 
 	switch upstreamProto {
 	case canonical.ProtocolOpenAIChat:
-		usageResult = streamOpenAIToClient(scanner, flusher, c.Writer, clientProto, reqLog)
+		usageResult = streamOpenAIToClient(scanner, flusher, c.Writer, clientProto, hasWebSearch, reqLog)
 	case canonical.ProtocolAnthropicMessage:
 		usageResult = streamAnthropicToClient(scanner, flusher, c.Writer, clientProto, reqLog)
 	}
@@ -440,10 +452,10 @@ func handlePassthroughStream(c *gin.Context, clientProto, upstreamProto canonica
 	return usageResult
 }
 
-func streamOpenAIToClient(scanner *bufio.Scanner, flusher http.Flusher, w io.Writer, clientProto canonical.Protocol, reqLog *requestLogger) *canonical.CanonicalUsage {
+func streamOpenAIToClient(scanner *bufio.Scanner, flusher http.Flusher, w io.Writer, clientProto canonical.Protocol, hasWebSearch bool, reqLog *requestLogger) *canonical.CanonicalUsage {
 	var usageResult *canonical.CanonicalUsage
+	webSearchInjected := false
 
-	// Choose client encoder.
 	var openaiEnc *codec.OpenAIStreamEncoder
 	var anthEnc *codec.AnthropicStreamEncoder
 	if clientProto == canonical.ProtocolOpenAIChat {
@@ -465,6 +477,13 @@ func streamOpenAIToClient(scanner *bufio.Scanner, flusher http.Flusher, w io.Wri
 		for _, ev := range events {
 			if ev.Type == canonical.EventUsageFinal && ev.Usage != nil {
 				usageResult = ev.Usage
+			}
+			if !webSearchInjected && hasWebSearch && anthEnc != nil && ev.Type == canonical.EventTextDelta && ev.Text != "" {
+				sse, n := codec.SynthesizeWebSearchSSE(anthEnc.BlockIdx())
+				fmt.Fprint(w, sse)
+				anthEnc.AdvanceBlockIdx(n)
+				flusher.Flush()
+				webSearchInjected = true
 			}
 			var sseData string
 			if openaiEnc != nil {
@@ -593,4 +612,17 @@ func commonErrorType(status int) string {
 	default:
 		return "invalid_request_error"
 	}
+}
+
+// injectWebSearchBlocks prepends synthetic server_tool_use + web_search_tool_result
+// blocks when an Anthropic client made a web_search request through an OpenAI upstream.
+func injectWebSearchBlocks(resp *canonical.CanonicalResponse, hasWebSearch bool, clientProto, upstreamProto canonical.Protocol) {
+	if !hasWebSearch || clientProto != canonical.ProtocolAnthropicMessage || upstreamProto != canonical.ProtocolOpenAIChat {
+		return
+	}
+	if len(resp.Output) == 0 {
+		return
+	}
+	toolUse, toolResult := codec.SynthesizeWebSearchBlocks()
+	resp.Output[0].Content = append([]canonical.CanonicalContentBlock{toolUse, toolResult}, resp.Output[0].Content...)
 }
