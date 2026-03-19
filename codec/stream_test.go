@@ -160,6 +160,32 @@ func TestOpenAIStreamEncoder_TextDelta(t *testing.T) {
 	}
 }
 
+func TestOpenAIStreamEncoder_ThinkingDelta(t *testing.T) {
+	enc := NewOpenAIStreamEncoder()
+	line := enc.Encode(canonical.CanonicalStreamEvent{
+		Type:       canonical.EventThinkingDelta,
+		Text:       "Let me think",
+		ResponseID: "chatcmpl-123",
+		Model:      "gpt-4o",
+	})
+	if !strings.Contains(line, `"reasoning_content":"Let me think"`) {
+		t.Fatalf("line = %q", line)
+	}
+}
+
+func TestOpenAIStreamEncoder_MessageStop(t *testing.T) {
+	enc := NewOpenAIStreamEncoder()
+	line := enc.Encode(canonical.CanonicalStreamEvent{
+		Type:       canonical.EventMessageStop,
+		StopReason: "end_turn",
+		ResponseID: "chatcmpl-123",
+		Model:      "gpt-4o",
+	})
+	if !strings.Contains(line, `"finish_reason":"stop"`) {
+		t.Fatalf("line = %q", line)
+	}
+}
+
 func TestOpenAIStreamEncoder_Done(t *testing.T) {
 	enc := NewOpenAIStreamEncoder()
 	if enc.Done() != "data: [DONE]\n\n" {
@@ -325,6 +351,12 @@ func TestAnthropicStreamEncoder_UsageFinal(t *testing.T) {
 			CacheReadTokens:  &cacheRead64,
 		},
 	})
+	if line != "" {
+		t.Errorf("usage-only event should wait for stop reason, got %q", line)
+	}
+	line = enc.Encode(canonical.CanonicalStreamEvent{
+		Type: canonical.EventMessageStop, StopReason: "end_turn",
+	})
 	if !strings.Contains(line, `"input_tokens":10`) {
 		t.Errorf("line = %q", line)
 	}
@@ -332,6 +364,9 @@ func TestAnthropicStreamEncoder_UsageFinal(t *testing.T) {
 		t.Errorf("line = %q", line)
 	}
 	if !strings.Contains(line, `"cache_read_input_tokens":3`) {
+		t.Errorf("line = %q", line)
+	}
+	if !strings.Contains(line, `"stop_reason":"end_turn"`) {
 		t.Errorf("line = %q", line)
 	}
 }

@@ -38,6 +38,7 @@ func newTestEnv(t *testing.T, upstreamHandler http.HandlerFunc) *testEnv {
 
 	cfg := &config.Config{
 		Server:  config.ServerConfig{Host: "0.0.0.0", Port: 8080},
+		Logging: config.LoggingConfig{RequestDir: t.TempDir()},
 		Storage: config.StorageConfig{Driver: "sqlite", DSN: ":memory:"},
 		Tokens: []config.TokenConfig{
 			{ID: "tok_default", Name: "default", Key: "nk_test_token"},
@@ -49,9 +50,9 @@ func newTestEnv(t *testing.T, upstreamHandler http.HandlerFunc) *testEnv {
 				BaseURL:  upstream.URL,
 				APIKey:   "test-anthropic-key",
 				Priority: 100,
-				Models: map[string]string{
-					"gpt-4o":      "claude-3-7-sonnet",
-					"gpt-4o-mini": "claude-3-7-sonnet",
+				Models: map[string]config.ModelTargetConfig{
+					"gpt-4o":      {Upstream: "claude-3-7-sonnet"},
+					"gpt-4o-mini": {Upstream: "claude-3-7-sonnet"},
 				},
 			},
 			{
@@ -60,8 +61,8 @@ func newTestEnv(t *testing.T, upstreamHandler http.HandlerFunc) *testEnv {
 				BaseURL:  upstream.URL,
 				APIKey:   "test-openai-key",
 				Priority: 90,
-				Models: map[string]string{
-					"claude-sonnet": "gpt-4o",
+				Models: map[string]config.ModelTargetConfig{
+					"claude-sonnet": {Upstream: "gpt-4o"},
 				},
 			},
 		},
@@ -80,7 +81,7 @@ func newTestEnv(t *testing.T, upstreamHandler http.HandlerFunc) *testEnv {
 	usageSvc := usage.NewService(usageStore)
 	selector := provider.NewSelector(cfg.Providers)
 	executor := execute.NewExecutor()
-	router := NewRouter(cfg, tokenSvc, usageSvc, selector, executor)
+	router := NewRouter(tokenSvc, usageSvc, selector, executor, cfg.Logging)
 
 	return &testEnv{
 		cfg:      cfg,
@@ -336,7 +337,7 @@ func TestProxyForcedStreamAggregation(t *testing.T) {
 
 	env.cfg.Providers[0].ForceStream = true
 	env.selector = provider.NewSelector(env.cfg.Providers)
-	env.router = NewRouter(env.cfg, env.tokenSvc, env.usageSvc, env.selector, env.executor)
+	env.router = NewRouter(env.tokenSvc, env.usageSvc, env.selector, env.executor, env.cfg.Logging)
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(fixtureString(t, "openai_basic_request.json")))
 	req.Header.Set("Authorization", "Bearer "+env.apiToken)
@@ -355,8 +356,11 @@ func TestProxyReasoningMapping(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read upstream request: %v", err)
 		}
-		if !strings.Contains(string(body), `"thinking":{"type":"enabled"}`) {
+		if !strings.Contains(string(body), `"thinking":{"type":"adaptive"}`) {
 			t.Errorf("missing thinking mapping: %s", string(body))
+		}
+		if !strings.Contains(string(body), `"output_config":{"effort":"high"}`) {
+			t.Errorf("missing effort mapping: %s", string(body))
 		}
 
 		w.Header().Set("Content-Type", "application/json")

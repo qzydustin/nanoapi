@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/qzydustin/nanoapi/canonical"
+	"github.com/qzydustin/nanoapi/config"
 )
 
 func sp(s string) *string   { return &s }
@@ -30,7 +31,7 @@ func TestEncodeOpenAI_SimpleText(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -64,7 +65,7 @@ func TestEncodeOpenAI_ImageDataURL(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -93,7 +94,7 @@ func TestEncodeOpenAI_ToolCalls(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -105,6 +106,110 @@ func TestEncodeOpenAI_ToolCalls(t *testing.T) {
 	tcs := msg["tool_calls"].([]any)
 	if len(tcs) != 1 {
 		t.Fatalf("tool_calls count = %d", len(tcs))
+	}
+}
+
+func TestEncodeOpenAI_InfersDummyToolsFromHistory(t *testing.T) {
+	req := &canonical.CanonicalRequest{
+		Messages: []canonical.CanonicalMessage{
+			{Role: "assistant", Content: []canonical.CanonicalContentBlock{
+				{Type: "tool_call", ToolCall: &canonical.CanonicalToolCall{
+					ID: "call_1", Name: "webfetch",
+					Arguments: map[string]any{"url": "https://example.com"},
+				}},
+			}},
+			{Role: "tool", Content: []canonical.CanonicalContentBlock{
+				{Type: "tool_result", ToolResult: &canonical.CanonicalToolResult{
+					ToolCallID: "call_1",
+					Content:    []canonical.CanonicalContentBlock{{Type: "text", Text: sp("ok")}},
+				}},
+			}},
+			{Role: "assistant", Content: []canonical.CanonicalContentBlock{
+				{Type: "tool_call", ToolCall: &canonical.CanonicalToolCall{
+					ID: "call_2", Name: "webfetch",
+					Arguments: map[string]any{"url": "https://example.org"},
+				}},
+			}},
+		},
+	}
+
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	tools, ok := raw["tools"].([]any)
+	if !ok {
+		t.Fatalf("tools missing or wrong type: %T", raw["tools"])
+	}
+	if len(tools) != 1 {
+		t.Fatalf("tools count = %d, want 1 (deduplicated)", len(tools))
+	}
+	tool := tools[0].(map[string]any)
+	if tool["type"] != "function" {
+		t.Errorf("tool.type = %v", tool["type"])
+	}
+	fn := tool["function"].(map[string]any)
+	if fn["name"] != "webfetch" {
+		t.Errorf("tool.function.name = %v", fn["name"])
+	}
+}
+
+func TestEncodeOpenAI_NoToolsInferredWithoutHistory(t *testing.T) {
+	req := &canonical.CanonicalRequest{
+		Messages: []canonical.CanonicalMessage{
+			{Role: "user", Content: []canonical.CanonicalContentBlock{
+				{Type: "text", Text: sp("Hello")},
+			}},
+		},
+	}
+
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	var raw map[string]any
+	json.Unmarshal(body, &raw)
+	if _, ok := raw["tools"]; ok {
+		t.Fatalf("tools should be omitted when no tool history, got %v", raw["tools"])
+	}
+}
+
+func TestEncodeOpenAI_ExplicitToolsNotOverriddenByInference(t *testing.T) {
+	req := &canonical.CanonicalRequest{
+		Tools: []canonical.CanonicalTool{
+			{Name: "calculator", Description: "Does math", InputSchema: map[string]any{"type": "object"}},
+		},
+		Messages: []canonical.CanonicalMessage{
+			{Role: "assistant", Content: []canonical.CanonicalContentBlock{
+				{Type: "tool_call", ToolCall: &canonical.CanonicalToolCall{
+					ID: "call_1", Name: "calculator",
+					Arguments: map[string]any{"expr": "1+1"},
+				}},
+			}},
+		},
+	}
+
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	var raw map[string]any
+	json.Unmarshal(body, &raw)
+	tools := raw["tools"].([]any)
+	if len(tools) != 1 {
+		t.Fatalf("tools count = %d, want 1", len(tools))
+	}
+	fn := tools[0].(map[string]any)["function"].(map[string]any)
+	if fn["description"] != "Does math" {
+		t.Errorf("should use explicit tool, not inferred; description = %v", fn["description"])
 	}
 }
 
@@ -210,7 +315,7 @@ func TestEncodeAnthropic_SimpleText(t *testing.T) {
 		Params: canonical.CanonicalParams{MaxTokens: ip(1024)},
 	}
 
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false)
+	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -245,7 +350,7 @@ func TestEncodeAnthropic_Thinking(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false)
+	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -276,7 +381,7 @@ func TestEncodeAnthropic_ReasoningEffortEnablesThinking(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false)
+	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -284,8 +389,128 @@ func TestEncodeAnthropic_ReasoningEffortEnablesThinking(t *testing.T) {
 	var raw map[string]any
 	json.Unmarshal(body, &raw)
 	thinking := raw["thinking"].(map[string]any)
-	if thinking["type"] != "enabled" {
+	if thinking["type"] != "adaptive" {
 		t.Errorf("thinking.type = %v", thinking["type"])
+	}
+	outputConfig := raw["output_config"].(map[string]any)
+	if outputConfig["effort"] != "high" {
+		t.Errorf("output_config.effort = %v", outputConfig["effort"])
+	}
+}
+
+func TestDecodeAnthropic_ReasoningEffort(t *testing.T) {
+	body := []byte(`{
+		"model": "claude-opus-4-6",
+		"max_tokens": 4096,
+		"thinking": {"type": "adaptive"},
+		"output_config": {"effort": "max"},
+		"messages": [{"role": "user", "content": "hello"}]
+	}`)
+
+	req, err := canonical.DecodeRequest(canonical.ProtocolAnthropicMessage, body)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if req.Params.Reasoning == nil {
+		t.Fatal("reasoning should not be nil")
+	}
+	if req.Params.Reasoning.Mode != "adaptive" {
+		t.Fatalf("reasoning.mode = %q", req.Params.Reasoning.Mode)
+	}
+	if req.Params.Reasoning.Effort == nil || *req.Params.Reasoning.Effort != "max" {
+		t.Fatalf("reasoning.effort = %+v", req.Params.Reasoning.Effort)
+	}
+}
+
+func TestEncodeAnthropic_ReasoningEffortNoneDisablesThinking(t *testing.T) {
+	req := &canonical.CanonicalRequest{
+		Messages: []canonical.CanonicalMessage{
+			{Role: "user", Content: []canonical.CanonicalContentBlock{
+				{Type: "text", Text: sp("Do not think")},
+			}},
+		},
+		Params: canonical.CanonicalParams{
+			Reasoning: &canonical.CanonicalReasoning{
+				Effort: sp("none"),
+			},
+		},
+	}
+
+	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	var raw map[string]any
+	json.Unmarshal(body, &raw)
+	thinking := raw["thinking"].(map[string]any)
+	if thinking["type"] != "disabled" {
+		t.Fatalf("thinking.type = %v", thinking["type"])
+	}
+	if _, ok := raw["output_config"]; ok {
+		t.Fatalf("output_config should be omitted, got %v", raw["output_config"])
+	}
+}
+
+func TestEncodeAnthropic_ReasoningEffortAutoUsesAdaptiveWithoutEffort(t *testing.T) {
+	req := &canonical.CanonicalRequest{
+		Messages: []canonical.CanonicalMessage{
+			{Role: "user", Content: []canonical.CanonicalContentBlock{
+				{Type: "text", Text: sp("Auto thinking")},
+			}},
+		},
+		Params: canonical.CanonicalParams{
+			Reasoning: &canonical.CanonicalReasoning{
+				Effort: sp("auto"),
+			},
+		},
+	}
+
+	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	var raw map[string]any
+	json.Unmarshal(body, &raw)
+	thinking := raw["thinking"].(map[string]any)
+	if thinking["type"] != "adaptive" {
+		t.Fatalf("thinking.type = %v", thinking["type"])
+	}
+	if _, ok := raw["output_config"]; ok {
+		t.Fatalf("output_config should be omitted, got %v", raw["output_config"])
+	}
+}
+
+func TestEncodeAnthropic_ReasoningEffortPreservesBudgetTokens(t *testing.T) {
+	req := &canonical.CanonicalRequest{
+		Messages: []canonical.CanonicalMessage{
+			{Role: "user", Content: []canonical.CanonicalContentBlock{
+				{Type: "text", Text: sp("Think about this")},
+			}},
+		},
+		Params: canonical.CanonicalParams{
+			MaxTokens: ip(2048),
+			Reasoning: &canonical.CanonicalReasoning{
+				Effort:       sp("high"),
+				BudgetTokens: ip(1024),
+			},
+		},
+	}
+
+	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	var raw map[string]any
+	json.Unmarshal(body, &raw)
+	thinking := raw["thinking"].(map[string]any)
+	if thinking["type"] != "adaptive" {
+		t.Fatalf("thinking.type = %v", thinking["type"])
+	}
+	if thinking["budget_tokens"] != float64(1024) {
+		t.Fatalf("thinking.budget_tokens = %v", thinking["budget_tokens"])
 	}
 }
 
@@ -303,7 +528,7 @@ func TestEncodeAnthropic_Base64Image(t *testing.T) {
 		Params: canonical.CanonicalParams{MaxTokens: ip(1024)},
 	}
 
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false)
+	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -383,7 +608,7 @@ func TestCrossProtocol_OpenAIToAnthropic(t *testing.T) {
 	}
 
 	// Encode as Anthropic request
-	anthBody, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false)
+	anthBody, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
 	if err != nil {
 		t.Fatalf("encode anthropic: %v", err)
 	}
@@ -414,7 +639,7 @@ func TestCrossProtocol_AnthropicToOpenAI(t *testing.T) {
 	}
 
 	// Encode as OpenAI request
-	openaiBody, err := EncodeOpenAIRequest(req, "gpt-4o", false)
+	openaiBody, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode openai: %v", err)
 	}
@@ -441,7 +666,7 @@ func TestCrossProtocol_AnthropicThinkingToOpenAIReasoning(t *testing.T) {
 		t.Fatalf("decode anthropic: %v", err)
 	}
 
-	openaiBody, err := EncodeOpenAIRequest(req, "gpt-4o", false)
+	openaiBody, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode openai: %v", err)
 	}
@@ -469,7 +694,7 @@ func TestEncodeOpenAI_ToolResult(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -492,6 +717,122 @@ func TestEncodeOpenAI_ToolResult(t *testing.T) {
 	}
 }
 
+func TestEncodeOpenAI_ToolResultPreservesImageContent(t *testing.T) {
+	req := &canonical.CanonicalRequest{
+		Messages: []canonical.CanonicalMessage{
+			{Role: "tool", Content: []canonical.CanonicalContentBlock{
+				{Type: "tool_result", ToolResult: &canonical.CanonicalToolResult{
+					ToolCallID: "call_img",
+					Content: []canonical.CanonicalContentBlock{
+						{Type: "text", Text: sp("look at this")},
+						{Type: "image", Image: &canonical.CanonicalImage{
+							SourceType: "base64",
+							MediaType:  sp("image/png"),
+							Data:       sp("iVBORw0KGgoAAAANSUhEUg=="),
+							Detail:     "high",
+						}},
+					},
+				}},
+			}},
+		},
+	}
+
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	var raw map[string]any
+	json.Unmarshal(body, &raw)
+	msgs := raw["messages"].([]any)
+	msg := msgs[0].(map[string]any)
+	content := msg["content"].([]any)
+	if len(content) != 2 {
+		t.Fatalf("content count = %d, want 2", len(content))
+	}
+	img := content[1].(map[string]any)
+	if img["type"] != "image_url" {
+		t.Fatalf("content[1].type = %v", img["type"])
+	}
+	imageURL := img["image_url"].(map[string]any)
+	if imageURL["url"] != "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==" {
+		t.Fatalf("image_url.url = %v", imageURL["url"])
+	}
+	if imageURL["detail"] != "high" {
+		t.Fatalf("image_url.detail = %v", imageURL["detail"])
+	}
+}
+
+func TestEncodeOpenAI_UserToolResultComesBeforeUserText(t *testing.T) {
+	req := &canonical.CanonicalRequest{
+		Messages: []canonical.CanonicalMessage{
+			{Role: "user", Content: []canonical.CanonicalContentBlock{
+				{Type: "tool_result", ToolResult: &canonical.CanonicalToolResult{
+					ToolCallID: "call_1",
+					Content:    []canonical.CanonicalContentBlock{{Type: "text", Text: sp("Sunny, 72°F")}},
+				}},
+				{Type: "text", Text: sp("What should I wear?")},
+			}},
+		},
+	}
+
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	var raw map[string]any
+	json.Unmarshal(body, &raw)
+	msgs := raw["messages"].([]any)
+	if len(msgs) != 2 {
+		t.Fatalf("messages count = %d, want 2", len(msgs))
+	}
+
+	toolMsg := msgs[0].(map[string]any)
+	if toolMsg["role"] != "tool" {
+		t.Fatalf("first role = %v, want tool", toolMsg["role"])
+	}
+	if toolMsg["tool_call_id"] != "call_1" {
+		t.Fatalf("first tool_call_id = %v", toolMsg["tool_call_id"])
+	}
+
+	userMsg := msgs[1].(map[string]any)
+	if userMsg["role"] != "user" {
+		t.Fatalf("second role = %v, want user", userMsg["role"])
+	}
+	if userMsg["content"] != "What should I wear?" {
+		t.Fatalf("second content = %v", userMsg["content"])
+	}
+}
+
+func TestEncodeOpenAI_AssistantToolCallsIncludeEmptyContent(t *testing.T) {
+	req := &canonical.CanonicalRequest{
+		Messages: []canonical.CanonicalMessage{
+			{Role: "assistant", Content: []canonical.CanonicalContentBlock{
+				{Type: "tool_call", ToolCall: &canonical.CanonicalToolCall{
+					ID: "call_1", Name: "get_weather", Arguments: map[string]any{"city": "Phoenix"},
+				}},
+			}},
+		},
+	}
+
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	var raw map[string]any
+	json.Unmarshal(body, &raw)
+	msgs := raw["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("messages count = %d, want 1", len(msgs))
+	}
+	msg := msgs[0].(map[string]any)
+	if msg["content"] != "" {
+		t.Fatalf("content = %#v, want empty string", msg["content"])
+	}
+}
+
 // ---------------------------------------------------------------------------
 // OpenAI Request Encoding — image base64 → data_url
 // ---------------------------------------------------------------------------
@@ -509,7 +850,7 @@ func TestEncodeOpenAI_ImageBase64ToDataURL(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -542,7 +883,7 @@ func TestEncodeOpenAI_ImageURL(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -577,7 +918,7 @@ func TestEncodeOpenAI_ReasoningEffort(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -586,6 +927,88 @@ func TestEncodeOpenAI_ReasoningEffort(t *testing.T) {
 	json.Unmarshal(body, &raw)
 	if raw["reasoning_effort"] != "high" {
 		t.Errorf("reasoning_effort = %v", raw["reasoning_effort"])
+	}
+}
+
+func TestEncodeOpenAI_ReasoningEffortMaxMapsToHigh(t *testing.T) {
+	req := &canonical.CanonicalRequest{
+		Messages: []canonical.CanonicalMessage{
+			{Role: "user", Content: []canonical.CanonicalContentBlock{
+				{Type: "text", Text: sp("Think harder")},
+			}},
+		},
+		Params: canonical.CanonicalParams{
+			Reasoning: &canonical.CanonicalReasoning{
+				Effort: sp("max"),
+			},
+		},
+	}
+
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	var raw map[string]any
+	json.Unmarshal(body, &raw)
+	if raw["reasoning_effort"] != "high" {
+		t.Errorf("reasoning_effort = %v, want high", raw["reasoning_effort"])
+	}
+}
+
+func TestEncodeOpenAI_DisabledThinkingOverridesEffortToLowestSupported(t *testing.T) {
+	req := &canonical.CanonicalRequest{
+		Messages: []canonical.CanonicalMessage{
+			{Role: "user", Content: []canonical.CanonicalContentBlock{
+				{Type: "text", Text: sp("Think less")},
+			}},
+		},
+		Params: canonical.CanonicalParams{
+			Reasoning: &canonical.CanonicalReasoning{
+				Mode:   "disabled",
+				Effort: sp("high"),
+			},
+		},
+	}
+
+	capability := &config.ReasoningCapability{AllowedEfforts: []string{"low", "medium", "high"}}
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, capability)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	var raw map[string]any
+	json.Unmarshal(body, &raw)
+	if raw["reasoning_effort"] != "low" {
+		t.Errorf("reasoning_effort = %v, want low", raw["reasoning_effort"])
+	}
+}
+
+func TestEncodeOpenAI_DisabledThinkingUsesNoneWhenSupported(t *testing.T) {
+	req := &canonical.CanonicalRequest{
+		Messages: []canonical.CanonicalMessage{
+			{Role: "user", Content: []canonical.CanonicalContentBlock{
+				{Type: "text", Text: sp("No thinking")},
+			}},
+		},
+		Params: canonical.CanonicalParams{
+			Reasoning: &canonical.CanonicalReasoning{
+				Mode:   "disabled",
+				Effort: sp("high"),
+			},
+		},
+	}
+
+	capability := &config.ReasoningCapability{AllowedEfforts: []string{"none", "low", "medium", "high"}}
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, capability)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	var raw map[string]any
+	json.Unmarshal(body, &raw)
+	if raw["reasoning_effort"] != "none" {
+		t.Errorf("reasoning_effort = %v, want none", raw["reasoning_effort"])
 	}
 }
 
@@ -614,6 +1037,56 @@ func TestDecodeOpenAIResponse_ReasoningContent(t *testing.T) {
 	}
 	if *blocks[1].Text != "The answer is 42." {
 		t.Errorf("text = %q", *blocks[1].Text)
+	}
+}
+
+func TestDecodeOpenAIResponse_ThinkingBlocks(t *testing.T) {
+	body := []byte(`{
+  "id": "chatcmpl-thinking",
+  "model": "us.anthropic.claude-opus-4-6-v1",
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "pong",
+        "thinking_blocks": [
+          {
+            "type": "thinking",
+            "thinking": "Let me think...",
+            "signature": "sig_abc"
+          }
+        ]
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 10,
+    "completion_tokens": 20,
+    "total_tokens": 30
+  }
+}`)
+
+	resp, err := DecodeOpenAIResponse(body)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	blocks := resp.Output[0].Content
+	if len(blocks) != 2 {
+		t.Fatalf("blocks count = %d, want 2", len(blocks))
+	}
+	if blocks[0].Type != "thinking" {
+		t.Fatalf("blocks[0].type = %q", blocks[0].Type)
+	}
+	if blocks[0].Thinking == nil || blocks[0].Thinking.Text == nil || *blocks[0].Thinking.Text != "Let me think..." {
+		t.Fatalf("thinking text = %+v", blocks[0].Thinking)
+	}
+	if blocks[0].Thinking.Signature == nil || *blocks[0].Thinking.Signature != "sig_abc" {
+		t.Fatalf("thinking signature = %+v", blocks[0].Thinking)
+	}
+	if blocks[1].Type != "text" || blocks[1].Text == nil || *blocks[1].Text != "pong" {
+		t.Fatalf("text block = %+v", blocks[1])
 	}
 }
 
@@ -678,7 +1151,7 @@ func TestEncodeAnthropic_ToolResult(t *testing.T) {
 		Params: canonical.CanonicalParams{MaxTokens: ip(1024)},
 	}
 
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false)
+	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -700,6 +1173,54 @@ func TestEncodeAnthropic_ToolResult(t *testing.T) {
 	}
 }
 
+func TestEncodeAnthropic_ToolResultPreservesImageContent(t *testing.T) {
+	req := &canonical.CanonicalRequest{
+		Messages: []canonical.CanonicalMessage{
+			{Role: "user", Content: []canonical.CanonicalContentBlock{
+				{Type: "tool_result", ToolResult: &canonical.CanonicalToolResult{
+					ToolCallID: "toolu_img",
+					Content: []canonical.CanonicalContentBlock{
+						{Type: "text", Text: sp("look at this")},
+						{Type: "image", Image: &canonical.CanonicalImage{
+							SourceType: "base64",
+							MediaType:  sp("image/png"),
+							Data:       sp("iVBORw0KGgoAAAANSUhEUg=="),
+						}},
+					},
+				}},
+			}},
+		},
+		Params: canonical.CanonicalParams{MaxTokens: ip(1024)},
+	}
+
+	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	var raw map[string]any
+	json.Unmarshal(body, &raw)
+	msgs := raw["messages"].([]any)
+	msg := msgs[0].(map[string]any)
+	content := msg["content"].([]any)
+	block := content[0].(map[string]any)
+	inner := block["content"].([]any)
+	if len(inner) != 2 {
+		t.Fatalf("inner content count = %d, want 2", len(inner))
+	}
+	image := inner[1].(map[string]any)
+	if image["type"] != "image" {
+		t.Fatalf("inner image type = %v", image["type"])
+	}
+	source := image["source"].(map[string]any)
+	if source["type"] != "base64" {
+		t.Fatalf("source.type = %v", source["type"])
+	}
+	if source["media_type"] != "image/png" {
+		t.Fatalf("source.media_type = %v", source["media_type"])
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Anthropic Request Encoding — tool_use
 // ---------------------------------------------------------------------------
@@ -717,7 +1238,7 @@ func TestEncodeAnthropic_ToolUse(t *testing.T) {
 		Params: canonical.CanonicalParams{MaxTokens: ip(1024)},
 	}
 
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false)
+	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -756,7 +1277,7 @@ func TestEncodeAnthropic_URLImage(t *testing.T) {
 		Params: canonical.CanonicalParams{MaxTokens: ip(1024)},
 	}
 
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false)
+	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -794,7 +1315,7 @@ func TestEncodeAnthropic_DataURLImageToBase64(t *testing.T) {
 		Params: canonical.CanonicalParams{MaxTokens: ip(1024)},
 	}
 
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false)
+	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -830,7 +1351,7 @@ func TestEncodeAnthropicClientResponse_ThinkingAndToolUse(t *testing.T) {
 		ID: "msg_123", Model: "claude-3-7-sonnet-20250219", StopReason: "tool_use",
 		Output: []canonical.CanonicalMessage{
 			{Role: "assistant", Content: []canonical.CanonicalContentBlock{
-				{Type: "thinking", Thinking: &canonical.CanonicalThinkingBlock{Text: sp("Let me think...")}},
+				{Type: "thinking", Thinking: &canonical.CanonicalThinkingBlock{Text: sp("Let me think..."), Signature: sp("sig_123")}},
 				{Type: "tool_call", ToolCall: &canonical.CanonicalToolCall{
 					ID: "toolu_1", Name: "get_weather",
 					Arguments: map[string]any{"location": "NYC"},
@@ -863,6 +1384,9 @@ func TestEncodeAnthropicClientResponse_ThinkingAndToolUse(t *testing.T) {
 	if content[0].(map[string]any)["type"] != "thinking" {
 		t.Errorf("content[0].type = %v", content[0].(map[string]any)["type"])
 	}
+	if content[0].(map[string]any)["signature"] != "sig_123" {
+		t.Errorf("content[0].signature = %v", content[0].(map[string]any)["signature"])
+	}
 	if content[1].(map[string]any)["type"] != "tool_use" {
 		t.Errorf("content[1].type = %v", content[1].(map[string]any)["type"])
 	}
@@ -892,7 +1416,7 @@ func TestEncodeAnthropic_DefaultMaxTokens(t *testing.T) {
 		// No MaxTokens set — should default to 4096
 	}
 
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false)
+	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}

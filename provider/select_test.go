@@ -15,9 +15,9 @@ func makeProviders() []config.ProviderConfig {
 			BaseURL:  "https://api.anthropic.com",
 			APIKey:   "anthropic-test-key",
 			Priority: 100,
-			Models: map[string]string{
-				"gpt-4o-mini": "claude-3-7-sonnet-20250219",
-				"gpt-4o":      "claude-3-7-sonnet-20250219",
+			Models: map[string]config.ModelTargetConfig{
+				"gpt-4o-mini": {Upstream: "claude-3-7-sonnet-20250219"},
+				"gpt-4o":      {Upstream: "claude-3-7-sonnet-20250219"},
 			},
 			ForceStream: true,
 			Override: config.ProviderOverride{
@@ -35,9 +35,9 @@ func makeProviders() []config.ProviderConfig {
 			BaseURL:  "https://api.openai.com",
 			APIKey:   "openai-test-key",
 			Priority: 90,
-			Models: map[string]string{
-				"gpt-4o-mini": "gpt-4o-mini",
-				"gpt-5-mini":  "gpt-5-mini",
+			Models: map[string]config.ModelTargetConfig{
+				"gpt-4o-mini": {Upstream: "gpt-4o-mini"},
+				"gpt-5-mini":  {Upstream: "gpt-5-mini"},
 			},
 		},
 	}
@@ -166,11 +166,11 @@ func TestSelect_SamePriorityAmbiguity(t *testing.T) {
 	providers := []config.ProviderConfig{
 		{
 			Name: "provider-a", Protocol: "openai_chat", Priority: 100,
-			Models: map[string]string{"gpt-4o": "gpt-4o"},
+			Models: map[string]config.ModelTargetConfig{"gpt-4o": {Upstream: "gpt-4o"}},
 		},
 		{
 			Name: "provider-b", Protocol: "anthropic_messages", Priority: 100,
-			Models: map[string]string{"gpt-4o": "claude-3-7-sonnet-20250219"},
+			Models: map[string]config.ModelTargetConfig{"gpt-4o": {Upstream: "claude-3-7-sonnet-20250219"}},
 		},
 	}
 	sel := NewSelector(providers)

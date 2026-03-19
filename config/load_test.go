@@ -11,6 +11,10 @@ server:
   host: 0.0.0.0
   port: 8080
 
+logging:
+  debug: false
+  request_dir: ./logs/requests
+
 storage:
   driver: sqlite
   dsn: ./test.db
@@ -30,7 +34,8 @@ providers:
       anthropic-version: "2023-06-01"
     force_stream: true
     models:
-      gpt-4o-mini: claude-3-7-sonnet-20250219
+      gpt-4o-mini:
+        upstream: claude-3-7-sonnet-20250219
     override:
       defaults:
         reasoning:
@@ -43,7 +48,13 @@ providers:
     api_key: openai-test-key
     priority: 90
     models:
-      gpt-4o-mini: gpt-4o-mini
+      gpt-4o-mini:
+        upstream: gpt-4o-mini
+        reasoning:
+          allowed_efforts:
+            - low
+            - medium
+            - high
 `
 
 func writeTempConfig(t *testing.T, content string) string {
@@ -70,6 +81,9 @@ func TestLoadConfig(t *testing.T) {
 	if cfg.Server.Port != 8080 {
 		t.Errorf("server.port = %d, want %d", cfg.Server.Port, 8080)
 	}
+	if cfg.Logging.RequestDir != "./logs/requests" {
+		t.Errorf("logging.request_dir = %q, want %q", cfg.Logging.RequestDir, "./logs/requests")
+	}
 	if cfg.Storage.Driver != "sqlite" {
 		t.Errorf("storage.driver = %q, want %q", cfg.Storage.Driver, "sqlite")
 	}
@@ -90,14 +104,25 @@ func TestLoadConfig(t *testing.T) {
 	if !p.ForceStream {
 		t.Error("providers[0].force_stream should be true")
 	}
-	if v, ok := p.Models["gpt-4o-mini"]; !ok || v != "claude-3-7-sonnet-20250219" {
-		t.Errorf("providers[0].models[gpt-4o-mini] = %q", v)
+	if v, ok := p.Models["gpt-4o-mini"]; !ok || v.Upstream != "claude-3-7-sonnet-20250219" {
+		t.Errorf("providers[0].models[gpt-4o-mini].upstream = %q", v.Upstream)
 	}
 	if p.Override.Defaults == nil || p.Override.Defaults.Reasoning == nil {
 		t.Fatal("providers[0].override.defaults.reasoning should not be nil")
 	}
 	if p.Override.Defaults.Reasoning.BudgetTokens == nil || *p.Override.Defaults.Reasoning.BudgetTokens != 4096 {
 		t.Errorf("providers[0].override.defaults.reasoning.budget_tokens = %v", p.Override.Defaults.Reasoning.BudgetTokens)
+	}
+	openaiProvider := cfg.Providers[1]
+	target, ok := openaiProvider.Models["gpt-4o-mini"]
+	if !ok || target.Reasoning == nil {
+		t.Fatal("providers[1].models[gpt-4o-mini].reasoning should exist")
+	}
+	if len(target.Reasoning.AllowedEfforts) != 3 {
+		t.Fatalf("allowed_efforts count = %d, want 3", len(target.Reasoning.AllowedEfforts))
+	}
+	if target.Reasoning.AllowedEfforts[2] != "high" {
+		t.Errorf("allowed_efforts[2] = %q, want %q", target.Reasoning.AllowedEfforts[2], "high")
 	}
 }
 
@@ -119,7 +144,8 @@ providers:
     base_url: https://api.openai.com
     api_key: ${TEST_PROVIDER_KEY}
     models:
-      gpt-4o: gpt-4o
+      gpt-4o:
+        upstream: gpt-4o
 `
 	t.Setenv("TEST_TOKEN_KEY", "token-from-env")
 	t.Setenv("TEST_PROVIDER_KEY", "provider-key-from-env")
@@ -134,6 +160,9 @@ providers:
 	}
 	if cfg.Providers[0].APIKey != "provider-key-from-env" {
 		t.Errorf("api_key = %q, want %q", cfg.Providers[0].APIKey, "provider-key-from-env")
+	}
+	if cfg.Logging.RequestDir != "logs/requests" {
+		t.Errorf("logging.request_dir default = %q, want %q", cfg.Logging.RequestDir, "logs/requests")
 	}
 }
 

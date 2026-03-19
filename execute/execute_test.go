@@ -45,7 +45,7 @@ func TestBuildUpstreamURL(t *testing.T) {
 }
 
 func TestStreamAggregation_TextOnly(t *testing.T) {
-	state := NewStreamAggregateState()
+	state := &StreamAggregateState{}
 	state.Apply(canonical.CanonicalStreamEvent{
 		Type: canonical.EventTextDelta, Text: "Hello ",
 		ResponseID: "msg_1", Model: "gpt-4o",
@@ -71,7 +71,7 @@ func TestStreamAggregation_TextOnly(t *testing.T) {
 }
 
 func TestStreamAggregation_ThinkingAndText(t *testing.T) {
-	state := NewStreamAggregateState()
+	state := &StreamAggregateState{}
 	state.Apply(canonical.CanonicalStreamEvent{
 		Type: canonical.EventThinkingDelta, Text: "Let me think...",
 		ResponseID: "msg_1", Model: "claude-3",
@@ -97,7 +97,7 @@ func TestStreamAggregation_ThinkingAndText(t *testing.T) {
 }
 
 func TestStreamAggregation_ToolCalls(t *testing.T) {
-	state := NewStreamAggregateState()
+	state := &StreamAggregateState{}
 	state.Apply(canonical.CanonicalStreamEvent{
 		Type:       canonical.EventToolCallStart,
 		ToolCallID: "call_1", ToolCallName: "get_weather",
@@ -136,7 +136,7 @@ func TestStreamAggregation_ToolCalls(t *testing.T) {
 }
 
 func TestStreamAggregation_Usage(t *testing.T) {
-	state := NewStreamAggregateState()
+	state := &StreamAggregateState{}
 	in64 := int64(10)
 	out64 := int64(5)
 	total64 := int64(15)
@@ -163,7 +163,7 @@ func TestStreamAggregation_Usage(t *testing.T) {
 func TestAggregation_OpenAIStreamPipeline(t *testing.T) {
 	lines := fixtureLines(t, "openai_aggregate_stream.sse")
 
-	state := NewStreamAggregateState()
+	state := &StreamAggregateState{}
 	for _, line := range lines {
 		events, done, err := codec.DecodeOpenAIStreamLine(line)
 		if err != nil {
@@ -204,7 +204,7 @@ func TestAggregation_AnthropicStreamPipeline(t *testing.T) {
 	pairs := fixtureSSEPairs(t, "anthropic_aggregate_stream.sse")
 
 	dec := codec.NewAnthropicStreamDecoder()
-	state := NewStreamAggregateState()
+	state := &StreamAggregateState{}
 	for _, p := range pairs {
 		events, err := dec.DecodeLine(p.event, p.data)
 		if err != nil {
@@ -238,7 +238,7 @@ func TestAggregation_AnthropicStreamPipeline(t *testing.T) {
 func TestAggregation_OpenAIToolCallStream(t *testing.T) {
 	lines := fixtureLines(t, "openai_tool_call_stream.sse")
 
-	state := NewStreamAggregateState()
+	state := &StreamAggregateState{}
 	for _, line := range lines {
 		events, done, err := codec.DecodeOpenAIStreamLine(line)
 		if err != nil {
@@ -280,7 +280,7 @@ func TestAggregation_OpenAIToolCallStream(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAggregation_EmptyStream(t *testing.T) {
-	state := NewStreamAggregateState()
+	state := &StreamAggregateState{}
 	resp := state.Finalize()
 	if len(resp.Output[0].Content) != 0 {
 		t.Errorf("content should be empty, got %d blocks", len(resp.Output[0].Content))
@@ -292,7 +292,7 @@ func TestAggregation_EmptyStream(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAggregation_UsageMerge(t *testing.T) {
-	state := NewStreamAggregateState()
+	state := &StreamAggregateState{}
 	in64 := int64(10)
 	out64 := int64(5)
 	state.Apply(canonical.CanonicalStreamEvent{

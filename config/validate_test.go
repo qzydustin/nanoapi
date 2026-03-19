@@ -15,6 +15,9 @@ func validConfig() *Config {
 			Host: "0.0.0.0",
 			Port: 8080,
 		},
+		Logging: LoggingConfig{
+			RequestDir: "logs/requests",
+		},
 		Storage: StorageConfig{
 			Driver: "sqlite",
 			DSN:    "./test.db",
@@ -29,7 +32,7 @@ func validConfig() *Config {
 				BaseURL:  "https://api.openai.com",
 				APIKey:   "openai-test-key",
 				Priority: 100,
-				Models:   map[string]string{"gpt-4o": "gpt-4o"},
+				Models:   map[string]ModelTargetConfig{"gpt-4o": {Upstream: "gpt-4o"}},
 			},
 			{
 				Name:     "p2",
@@ -37,7 +40,7 @@ func validConfig() *Config {
 				BaseURL:  "https://api.anthropic.com",
 				APIKey:   "anthropic-test-key",
 				Priority: 90,
-				Models:   map[string]string{"gpt-4o": "claude-3-7-sonnet-20250219"},
+				Models:   map[string]ModelTargetConfig{"gpt-4o": {Upstream: "claude-3-7-sonnet-20250219"}},
 				Override: ProviderOverride{
 					Defaults: &OverrideParams{
 						Reasoning: &ReasoningOverride{
@@ -65,6 +68,7 @@ func TestValidate_ServerErrors(t *testing.T) {
 	}{
 		{"empty host", func(c *Config) { c.Server.Host = "" }, "server.host"},
 		{"bad port", func(c *Config) { c.Server.Port = 0 }, "server.port"},
+		{"empty request dir", func(c *Config) { c.Logging.RequestDir = " " }, "logging.request_dir"},
 	}
 
 	for _, tt := range tests {
@@ -121,7 +125,7 @@ func TestValidate_ProviderErrors(t *testing.T) {
 		{"missing api key", func(c *Config) { c.Providers[0].APIKey = "" }, "api_key must not be empty"},
 		{"empty models", func(c *Config) { c.Providers[0].Models = nil }, "models must not be empty"},
 		{"empty model value", func(c *Config) {
-			c.Providers[0].Models = map[string]string{"gpt-4o": "  "}
+			c.Providers[0].Models = map[string]ModelTargetConfig{"gpt-4o": {Upstream: "  "}}
 		}, "model value"},
 	}
 
