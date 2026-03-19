@@ -36,10 +36,6 @@ providers:
     protocol: openai_chat
     base_url: https://api.openai.com
     api_key: your-openai-api-key
-    # Search implementation for built-in web search tools.
-    # openai: emit as a tool object in the tools array (OpenAI native format)
-    # openwebui: emit as a feature flag in a top-level features object (Open WebUI format)
-    search_mode: openai
     priority: 90
     force_stream: true
     models:

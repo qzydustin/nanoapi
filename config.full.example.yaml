@@ -101,10 +101,6 @@ providers:
     protocol: openai_chat
     base_url: https://api.openai.com
     api_key: your-openai-api-key
-    # Search implementation for built-in web search tools.
-    # openai: emit as a tool object in the tools array (OpenAI native format)
-    # openwebui: emit as a feature flag in a top-level features object (Open WebUI format)
-    search_mode: openai
     priority: 110
     headers:
       OpenAI-Organization: org_replace_me
@@ -173,3 +169,16 @@ providers:
           params:
             reasoning:
               effort: xhigh
+
+  # Open WebUI upstream with quirks.
+  # - name: openwebui
+  #   protocol: openai_chat
+  #   base_url: https://chat.example.com/api
+  #   api_key: your-key
+  #   priority: 80
+  #   force_stream: true
+  #   quirks:
+  #     openwebui_websearch: true  # send web search as features flag
+  #   models:
+  #     claude-opus-4-6:
+  #       upstream: bedrock-claude-4-6-opus

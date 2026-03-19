@@ -108,7 +108,7 @@ func TestEncodeOpenAI_WebSearchTool(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4", false, nil, "")
+	body, err := EncodeOpenAIRequest(req, "gpt-4", false, nil, false)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestEncodeOpenAI_WebSearchToolOpenWebUI(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4", false, nil, "openwebui")
+	body, err := EncodeOpenAIRequest(req, "gpt-4", false, nil, true)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestCrossProtocol_WebSearchAnthropicToOpenAI(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	out, err := EncodeOpenAIRequest(req, "gpt-4", false, nil, "")
+	out, err := EncodeOpenAIRequest(req, "gpt-4", false, nil, false)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}

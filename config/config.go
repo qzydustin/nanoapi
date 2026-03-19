@@ -39,13 +39,18 @@ type ProviderConfig struct {
 	Protocol    string            `yaml:"protocol"`
 	BaseURL     string            `yaml:"base_url"`
 	APIKey      string            `yaml:"api_key"`
-	SearchMode  string            `yaml:"search_mode"`
 	Priority    int               `yaml:"priority"`
 	Headers     map[string]string `yaml:"headers"`
 	ForceStream bool              `yaml:"force_stream"`
 
 	Models   map[string]ModelTargetConfig `yaml:"models"`
 	Override ProviderOverride             `yaml:"override"`
+	Quirks   *ProviderQuirks              `yaml:"quirks,omitempty"`
+}
+
+// ProviderQuirks holds non-standard behavior flags for specific backends.
+type ProviderQuirks struct {
+	OpenWebUIWebSearch bool `yaml:"openwebui_websearch"`
 }
 
 // ModelTargetConfig describes how one client-facing model maps to a specific

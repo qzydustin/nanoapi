@@ -73,7 +73,7 @@ type openAIOutToolFunc struct {
 
 
 // EncodeOpenAIRequest encodes a canonical request as an OpenAI chat request.
-func EncodeOpenAIRequest(req *canonical.CanonicalRequest, upstreamModel string, stream bool, capability *config.ReasoningCapability, searchMode string) ([]byte, error) {
+func EncodeOpenAIRequest(req *canonical.CanonicalRequest, upstreamModel string, stream bool, capability *config.ReasoningCapability, openwebUIWebSearch bool) ([]byte, error) {
 	out := openAIOutRequest{
 		Model:       upstreamModel,
 		Stream:      stream,
@@ -97,7 +97,7 @@ func EncodeOpenAIRequest(req *canonical.CanonicalRequest, upstreamModel string, 
 	enableOpenWebUISearch := false
 	for _, t := range req.Tools {
 		if t.Type == "web_search" {
-			if searchMode == "openwebui" {
+			if openwebUIWebSearch {
 				enableOpenWebUISearch = true
 				continue
 			}

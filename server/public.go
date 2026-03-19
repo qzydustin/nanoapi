@@ -158,7 +158,7 @@ func ProxyHandler(
 		}
 		switch upstreamProtocol {
 		case canonical.ProtocolOpenAIChat:
-			encodedBody, err = codec.EncodeOpenAIRequest(req, selection.UpstreamModel, upstreamStream, reasoningCapability, selection.Provider.SearchMode)
+			encodedBody, err = codec.EncodeOpenAIRequest(req, selection.UpstreamModel, upstreamStream, reasoningCapability, selection.Provider.Quirks != nil && selection.Provider.Quirks.OpenWebUIWebSearch)
 		case canonical.ProtocolAnthropicMessage:
 			encodedBody, err = codec.EncodeAnthropicRequest(req, selection.UpstreamModel, upstreamStream, reasoningCapability)
 		default:
