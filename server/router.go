@@ -1,6 +1,8 @@
 package server
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"github.com/qzydustin/nanoapi/canonical"
 	"github.com/qzydustin/nanoapi/config"
@@ -12,11 +14,11 @@ import (
 
 // NewRouter creates the Gin engine with all routes configured.
 func NewRouter(
-	_ *config.Config,
 	tokenSvc *token.Service,
 	usageSvc *usage.Service,
 	selector *provider.Selector,
 	executor *execute.Executor,
+	logCfg config.LoggingConfig,
 ) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -30,9 +32,9 @@ func NewRouter(
 	proxy.Use(TokenAuthMiddleware(tokenSvc))
 	{
 		proxy.POST("/v1/chat/completions",
-			ProxyHandler(canonical.ProtocolOpenAIChat, selector, executor, usageSvc))
+			ProxyHandler(canonical.ProtocolOpenAIChat, selector, executor, usageSvc, logCfg))
 		proxy.POST("/v1/messages",
-			ProxyHandler(canonical.ProtocolAnthropicMessage, selector, executor, usageSvc))
+			ProxyHandler(canonical.ProtocolAnthropicMessage, selector, executor, usageSvc, logCfg))
 	}
 
 	// Gateway-owned API endpoints — token self-query.
@@ -44,4 +46,11 @@ func NewRouter(
 	}
 
 	return r
+}
+
+// HealthHandler returns a simple health check endpoint.
+func HealthHandler() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	}
 }
