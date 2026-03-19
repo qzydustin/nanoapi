@@ -66,8 +66,9 @@ type openAIFunctionCall struct {
 }
 
 type openAITool struct {
-	Type     string           `json:"type"`
-	Function openAIToolFunc   `json:"function"`
+	Type              string         `json:"type"`
+	Function          openAIToolFunc `json:"function,omitempty"`
+	SearchContextSize string         `json:"search_context_size,omitempty"`
 }
 
 type openAIToolFunc struct {
@@ -112,11 +113,19 @@ func decodeOpenAIChat(body []byte) (*CanonicalRequest, error) {
 
 	// Tools
 	for _, t := range raw.Tools {
-		req.Tools = append(req.Tools, CanonicalTool{
-			Name:        t.Function.Name,
-			Description: t.Function.Description,
-			InputSchema: t.Function.Parameters,
-		})
+		tool := CanonicalTool{}
+		if t.Type == "function" {
+			tool.Name = t.Function.Name
+			tool.Description = t.Function.Description
+			tool.InputSchema = t.Function.Parameters
+		} else {
+			tool.Type = t.Type
+			if t.Type == "web_search" && t.SearchContextSize != "" {
+				maxUses := searchContextSizeToMaxUses(t.SearchContextSize)
+				tool.MaxUses = &maxUses
+			}
+		}
+		req.Tools = append(req.Tools, tool)
 	}
 
 	// Messages
@@ -315,9 +324,11 @@ type anthropicImageSource struct {
 }
 
 type anthropicTool struct {
-	Name        string `json:"name"`
+	Type        string `json:"type,omitempty"` // "web_search_20250305" for built-in tools
+	Name        string `json:"name,omitempty"`
 	Description string `json:"description,omitempty"`
 	InputSchema any    `json:"input_schema,omitempty"`
+	MaxUses     *int   `json:"max_uses,omitempty"` // for web_search
 }
 
 type anthropicThinking struct {
@@ -364,11 +375,20 @@ func decodeAnthropicMessages(body []byte) (*CanonicalRequest, error) {
 
 	// Tools
 	for _, t := range raw.Tools {
-		req.Tools = append(req.Tools, CanonicalTool{
+		tool := CanonicalTool{
 			Name:        t.Name,
 			Description: t.Description,
 			InputSchema: t.InputSchema,
-		})
+		}
+		if t.Type == "web_search_20250305" {
+			tool.Type = "web_search"
+		} else if t.Type != "" {
+			tool.Type = t.Type
+		}
+		if t.MaxUses != nil {
+			tool.MaxUses = t.MaxUses
+		}
+		req.Tools = append(req.Tools, tool)
 	}
 
 	// System
@@ -519,6 +539,17 @@ func decodeAnthropicToolResultContent(raw json.RawMessage) ([]CanonicalContentBl
 // ---------------------------------------------------------------------------
 
 func strPtr(s string) *string { return &s }
+
+func searchContextSizeToMaxUses(size string) int {
+	switch size {
+	case "low":
+		return 1
+	case "high":
+		return 10
+	default:
+		return 5
+	}
+}
 
 // parseDataURL extracts the media type and base64 data from a data URL of
 // the form "data:<mediaType>;base64,<data>".

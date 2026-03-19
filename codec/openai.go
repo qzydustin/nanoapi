@@ -9,20 +9,25 @@ import (
 )
 
 type openAIOutRequest struct {
-	Model           string          `json:"model"`
-	Messages        []openAIOutMsg  `json:"messages"`
-	Stream          bool            `json:"stream,omitempty"`
-	MaxTokens       *int            `json:"max_completion_tokens,omitempty"`
-	Temperature     *float64        `json:"temperature,omitempty"`
-	TopP            *float64        `json:"top_p,omitempty"`
-	Stop            []string        `json:"stop,omitempty"`
+	Model           string           `json:"model"`
+	Messages        []openAIOutMsg   `json:"messages"`
+	Stream          bool             `json:"stream,omitempty"`
+	MaxTokens       *int             `json:"max_completion_tokens,omitempty"`
+	Temperature     *float64         `json:"temperature,omitempty"`
+	TopP            *float64         `json:"top_p,omitempty"`
+	Stop            []string         `json:"stop,omitempty"`
 	Tools           *[]openAIOutTool `json:"tools,omitempty"`
-	ReasoningEffort *string         `json:"reasoning_effort,omitempty"`
-	StreamOptions   *streamOptions  `json:"stream_options,omitempty"`
+	ReasoningEffort *string          `json:"reasoning_effort,omitempty"`
+	StreamOptions   *streamOptions   `json:"stream_options,omitempty"`
+	Features        *openAIOutFeatures `json:"features,omitempty"`
 }
 
 type streamOptions struct {
 	IncludeUsage bool `json:"include_usage"`
+}
+
+type openAIOutFeatures struct {
+	WebSearch bool `json:"web_search,omitempty"`
 }
 
 type openAIOutMsg struct {
@@ -55,8 +60,9 @@ type openAIOutTCFunc struct {
 }
 
 type openAIOutTool struct {
-	Type     string            `json:"type"`
-	Function openAIOutToolFunc `json:"function"`
+	Type              string        `json:"type"`
+	Function          openAIOutToolFunc `json:"function,omitempty"`
+	SearchContextSize string        `json:"search_context_size,omitempty"`
 }
 
 type openAIOutToolFunc struct {
@@ -67,7 +73,7 @@ type openAIOutToolFunc struct {
 
 
 // EncodeOpenAIRequest encodes a canonical request as an OpenAI chat request.
-func EncodeOpenAIRequest(req *canonical.CanonicalRequest, upstreamModel string, stream bool, capability *config.ReasoningCapability) ([]byte, error) {
+func EncodeOpenAIRequest(req *canonical.CanonicalRequest, upstreamModel string, stream bool, capability *config.ReasoningCapability, searchMode string) ([]byte, error) {
 	out := openAIOutRequest{
 		Model:       upstreamModel,
 		Stream:      stream,
@@ -88,7 +94,21 @@ func EncodeOpenAIRequest(req *canonical.CanonicalRequest, upstreamModel string, 
 	}
 
 	var encodedTools []openAIOutTool
+	enableOpenWebUISearch := false
 	for _, t := range req.Tools {
+		if t.Type == "web_search" {
+			if searchMode == "openwebui" {
+				enableOpenWebUISearch = true
+				continue
+			}
+			tool := openAIOutTool{Type: "web_search"}
+			if t.MaxUses != nil {
+				tool.SearchContextSize = maxUsesToSearchContextSize(*t.MaxUses)
+			}
+			encodedTools = append(encodedTools, tool)
+			continue
+		}
+
 		encodedTools = append(encodedTools, openAIOutTool{
 			Type: "function",
 			Function: openAIOutToolFunc{
@@ -100,6 +120,9 @@ func EncodeOpenAIRequest(req *canonical.CanonicalRequest, upstreamModel string, 
 	}
 	if len(encodedTools) > 0 {
 		out.Tools = &encodedTools
+	}
+	if enableOpenWebUISearch {
+		out.Features = &openAIOutFeatures{WebSearch: true}
 	}
 
 	for _, sys := range req.System {
@@ -120,7 +143,7 @@ func EncodeOpenAIRequest(req *canonical.CanonicalRequest, upstreamModel string, 
 	// tool_calls unless the request also includes a tools definition. When the
 	// conversation contains prior tool calls but this turn has no tool defs,
 	// reconstruct minimal tool definitions from the function names in history.
-	if out.Tools == nil {
+	if out.Tools == nil && !enableOpenWebUISearch {
 		if inferred := inferToolsFromHistory(out.Messages); len(inferred) > 0 {
 			out.Tools = &inferred
 		}
@@ -602,3 +625,14 @@ func denormalizeOpenAIStopReason(reason string) string {
 }
 
 func intPtr(v int) *int { return &v }
+
+func maxUsesToSearchContextSize(maxUses int) string {
+	switch maxUses {
+	case 1:
+		return "low"
+	case 10:
+		return "high"
+	default:
+		return "medium"
+	}
+}

@@ -39,6 +39,7 @@ type ProviderConfig struct {
 	Protocol    string            `yaml:"protocol"`
 	BaseURL     string            `yaml:"base_url"`
 	APIKey      string            `yaml:"api_key"`
+	SearchMode  string            `yaml:"search_mode"`
 	Priority    int               `yaml:"priority"`
 	Headers     map[string]string `yaml:"headers"`
 	ForceStream bool              `yaml:"force_stream"`

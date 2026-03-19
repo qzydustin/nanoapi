@@ -78,6 +78,9 @@ func Validate(cfg *Config) error {
 		if p.Protocol != "openai_chat" && p.Protocol != "anthropic_messages" {
 			return fmt.Errorf("%s: protocol must be \"openai_chat\" or \"anthropic_messages\" (got %q)", prefix, p.Protocol)
 		}
+		if p.SearchMode != "" && p.SearchMode != "openai" && p.SearchMode != "openwebui" {
+			return fmt.Errorf("%s: search_mode must be \"openai\" or \"openwebui\" when set (got %q)", prefix, p.SearchMode)
+		}
 		if p.BaseURL == "" {
 			return fmt.Errorf("%s: base_url must not be empty", prefix)
 		}

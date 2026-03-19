@@ -121,6 +121,7 @@ func TestValidate_ProviderErrors(t *testing.T) {
 		{"no providers", func(c *Config) { c.Providers = nil }, "at least one provider"},
 		{"empty name", func(c *Config) { c.Providers[0].Name = "" }, "name must not be empty"},
 		{"bad protocol", func(c *Config) { c.Providers[0].Protocol = "grpc" }, "protocol must be"},
+		{"bad search_mode", func(c *Config) { c.Providers[0].SearchMode = "custom" }, "search_mode must be"},
 		{"empty base_url", func(c *Config) { c.Providers[0].BaseURL = "" }, "base_url"},
 		{"missing api key", func(c *Config) { c.Providers[0].APIKey = "" }, "api_key must not be empty"},
 		{"empty models", func(c *Config) { c.Providers[0].Models = nil }, "models must not be empty"},

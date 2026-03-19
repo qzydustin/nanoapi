@@ -31,7 +31,7 @@ func TestEncodeOpenAI_SimpleText(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, "")
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestEncodeOpenAI_ImageDataURL(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, "")
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestEncodeOpenAI_ToolCalls(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, "")
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestEncodeOpenAI_InfersDummyToolsFromHistory(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, "")
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestEncodeOpenAI_NoToolsInferredWithoutHistory(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, "")
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestEncodeOpenAI_ExplicitToolsNotOverriddenByInference(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, "")
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -639,7 +639,7 @@ func TestCrossProtocol_AnthropicToOpenAI(t *testing.T) {
 	}
 
 	// Encode as OpenAI request
-	openaiBody, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	openaiBody, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, "")
 	if err != nil {
 		t.Fatalf("encode openai: %v", err)
 	}
@@ -666,7 +666,7 @@ func TestCrossProtocol_AnthropicThinkingToOpenAIReasoning(t *testing.T) {
 		t.Fatalf("decode anthropic: %v", err)
 	}
 
-	openaiBody, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	openaiBody, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, "")
 	if err != nil {
 		t.Fatalf("encode openai: %v", err)
 	}
@@ -694,7 +694,7 @@ func TestEncodeOpenAI_ToolResult(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, "")
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -737,7 +737,7 @@ func TestEncodeOpenAI_ToolResultPreservesImageContent(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, "")
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -776,7 +776,7 @@ func TestEncodeOpenAI_UserToolResultComesBeforeUserText(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, "")
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -816,7 +816,7 @@ func TestEncodeOpenAI_AssistantToolCallsIncludeEmptyContent(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, "")
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -850,7 +850,7 @@ func TestEncodeOpenAI_ImageBase64ToDataURL(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, "")
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -883,7 +883,7 @@ func TestEncodeOpenAI_ImageURL(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, "")
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -918,7 +918,7 @@ func TestEncodeOpenAI_ReasoningEffort(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, "")
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -944,7 +944,7 @@ func TestEncodeOpenAI_ReasoningEffortMaxMapsToHigh(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, "")
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -972,7 +972,7 @@ func TestEncodeOpenAI_DisabledThinkingOverridesEffortToLowestSupported(t *testin
 	}
 
 	capability := &config.ReasoningCapability{AllowedEfforts: []string{"low", "medium", "high"}}
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, capability)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, capability, "")
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -1000,7 +1000,7 @@ func TestEncodeOpenAI_DisabledThinkingUsesNoneWhenSupported(t *testing.T) {
 	}
 
 	capability := &config.ReasoningCapability{AllowedEfforts: []string{"none", "low", "medium", "high"}}
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, capability)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, capability, "")
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}

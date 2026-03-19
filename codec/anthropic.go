@@ -70,9 +70,11 @@ type anthropicOutImgSrc struct {
 }
 
 type anthropicOutTool struct {
-	Name        string `json:"name"`
+	Type        string `json:"type,omitempty"`
+	Name        string `json:"name,omitempty"`
 	Description string `json:"description,omitempty"`
-	InputSchema any    `json:"input_schema"`
+	InputSchema any    `json:"input_schema,omitempty"`
+	MaxUses     *int   `json:"max_uses,omitempty"`
 }
 
 type anthropicOutThinking struct {
@@ -120,6 +122,18 @@ func EncodeAnthropicRequest(req *canonical.CanonicalRequest, upstreamModel strin
 
 	// Tools
 	for _, t := range req.Tools {
+		if t.Type == "web_search" {
+			tool := anthropicOutTool{
+				Type: "web_search_20250305",
+				Name: "web_search",
+			}
+			if t.MaxUses != nil {
+				tool.MaxUses = t.MaxUses
+			}
+			out.Tools = append(out.Tools, tool)
+			continue
+		}
+
 		schema := t.InputSchema
 		if schema == nil {
 			schema = map[string]any{"type": "object"}

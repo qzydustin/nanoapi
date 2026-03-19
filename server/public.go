@@ -158,7 +158,7 @@ func ProxyHandler(
 		}
 		switch upstreamProtocol {
 		case canonical.ProtocolOpenAIChat:
-			encodedBody, err = codec.EncodeOpenAIRequest(req, selection.UpstreamModel, upstreamStream, reasoningCapability)
+			encodedBody, err = codec.EncodeOpenAIRequest(req, selection.UpstreamModel, upstreamStream, reasoningCapability, selection.Provider.SearchMode)
 		case canonical.ProtocolAnthropicMessage:
 			encodedBody, err = codec.EncodeAnthropicRequest(req, selection.UpstreamModel, upstreamStream, reasoningCapability)
 		default:
@@ -594,5 +594,3 @@ func commonErrorType(status int) string {
 		return "invalid_request_error"
 	}
 }
-
-

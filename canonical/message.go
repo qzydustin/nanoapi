@@ -28,9 +28,11 @@ type CanonicalImage struct {
 
 // CanonicalTool describes a tool definition available for the model.
 type CanonicalTool struct {
+	Type        string // "" = function, "web_search" = built-in
 	Name        string
 	Description string
 	InputSchema any
+	MaxUses     *int
 }
 
 // CanonicalToolCall represents a tool invocation produced by the model.
