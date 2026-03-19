@@ -23,6 +23,7 @@ type CanonicalImage struct {
 	URL        *string // used when SourceType is "url" or "data_url"
 	MediaType  *string // e.g. "image/png"
 	Data       *string // raw base64 data
+	Detail     string  // "low", "high", "auto"; empty means unset
 }
 
 // CanonicalTool describes a tool definition available for the model.
@@ -48,5 +49,6 @@ type CanonicalToolResult struct {
 // CanonicalThinkingBlock holds reasoning / chain-of-thought text produced by
 // a model.  This must never be merged into visible answer text.
 type CanonicalThinkingBlock struct {
-	Text *string
+	Text      *string
+	Signature *string
 }

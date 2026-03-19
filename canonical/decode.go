@@ -41,7 +41,6 @@ type openAIMessage struct {
 	Content    json.RawMessage   `json:"content,omitempty"`
 	ToolCalls  []openAIToolCall  `json:"tool_calls,omitempty"`
 	ToolCallID string            `json:"tool_call_id,omitempty"`
-	Name       string            `json:"name,omitempty"`
 }
 
 type openAIContentPart struct {
@@ -215,6 +214,7 @@ func decodeOpenAIContent(raw json.RawMessage) ([]CanonicalContentBlock, error) {
 				continue
 			}
 			img := parseOpenAIImageURL(p.ImageURL.URL)
+			img.Detail = p.ImageURL.Detail
 			blocks = append(blocks, CanonicalContentBlock{Type: "image", Image: img})
 		default:
 			// Unknown content part types are silently skipped in V1.
@@ -273,6 +273,11 @@ type anthropicRequest struct {
 	StopSequences []string            `json:"stop_sequences,omitempty"`
 	Tools         []anthropicTool     `json:"tools,omitempty"`
 	Thinking      *anthropicThinking  `json:"thinking,omitempty"`
+	OutputConfig  *anthropicOutputConfig `json:"output_config,omitempty"`
+}
+
+type anthropicOutputConfig struct {
+	Effort *string `json:"effort,omitempty"`
 }
 
 type anthropicMessage struct {
@@ -349,6 +354,12 @@ func decodeAnthropicMessages(body []byte) (*CanonicalRequest, error) {
 			Mode:         raw.Thinking.Type,
 			BudgetTokens: raw.Thinking.BudgetTokens,
 		}
+	}
+	if raw.OutputConfig != nil && raw.OutputConfig.Effort != nil {
+		if req.Params.Reasoning == nil {
+			req.Params.Reasoning = &CanonicalReasoning{}
+		}
+		req.Params.Reasoning.Effort = raw.OutputConfig.Effort
 	}
 
 	// Tools

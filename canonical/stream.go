@@ -2,13 +2,14 @@ package canonical
 
 // Stream event type constants.
 const (
-	EventTextDelta     = "text_delta"
-	EventThinkingDelta = "thinking_delta"
-	EventToolCallStart = "tool_call_start"
-	EventToolCallDelta = "tool_call_delta"
-	EventToolCallEnd   = "tool_call_end"
-	EventMessageStop   = "message_stop"
-	EventUsageFinal    = "usage_final"
+	EventTextDelta         = "text_delta"
+	EventThinkingDelta     = "thinking_delta"
+	EventThinkingSignature = "thinking_signature"
+	EventToolCallStart     = "tool_call_start"
+	EventToolCallDelta     = "tool_call_delta"
+	EventToolCallEnd       = "tool_call_end"
+	EventMessageStop       = "message_stop"
+	EventUsageFinal        = "usage_final"
 )
 
 // CanonicalStreamEvent is the minimal internal streaming abstraction for V1.
@@ -18,6 +19,9 @@ type CanonicalStreamEvent struct {
 
 	// text_delta / thinking_delta
 	Text string
+
+	// thinking_signature
+	Signature string
 
 	// tool_call_start
 	ToolCallID   string
