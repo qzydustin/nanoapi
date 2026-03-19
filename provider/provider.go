@@ -9,6 +9,7 @@ import (
 // configured provider.
 type ProviderSelection struct {
 	Provider      *config.ProviderConfig
+	Target        *config.ModelTargetConfig
 	UpstreamModel string
 	ForceStream   bool
 	Override      config.OverrideParams

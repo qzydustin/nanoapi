@@ -24,14 +24,10 @@ func (s *Selector) Select(req *canonical.CanonicalRequest) (*ProviderSelection, 
 	clientModel := req.ClientModel
 
 	// Collect candidate providers.
-	type candidate struct {
-		idx      int
-		provider *config.ProviderConfig
-	}
-	var candidates []candidate
+	var candidates []*config.ProviderConfig
 	for i := range s.providers {
 		if _, ok := s.providers[i].Models[clientModel]; ok {
-			candidates = append(candidates, candidate{idx: i, provider: &s.providers[i]})
+			candidates = append(candidates, &s.providers[i])
 		}
 	}
 
@@ -41,14 +37,16 @@ func (s *Selector) Select(req *canonical.CanonicalRequest) (*ProviderSelection, 
 
 	// Sort by priority descending.
 	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].provider.Priority > candidates[j].provider.Priority
+		return candidates[i].Priority > candidates[j].Priority
 	})
 
-	best := candidates[0].provider
-	upstreamModel := best.Models[clientModel]
+	best := candidates[0]
+	target := best.Models[clientModel]
+	upstreamModel := target.Upstream
 
 	return &ProviderSelection{
 		Provider:      best,
+		Target:        &target,
 		UpstreamModel: upstreamModel,
 		ForceStream:   best.ForceStream,
 		Override:      ResolveOverride(req, best.Override),
