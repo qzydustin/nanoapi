@@ -64,6 +64,9 @@ type ExecutionResult struct {
 
 	// Aggregated response for ModeAggregateStream.
 	AggregatedResponse *canonical.CanonicalResponse
+
+	// WebSearchResults from OpenWebUI sources events (ModeAggregateStream).
+	WebSearchResults []codec.WebSearchResult
 }
 
 // Executor handles upstream HTTP communication.
@@ -120,13 +123,14 @@ func (e *Executor) Execute(ctx context.Context, plan *ExecutionPlan) (*Execution
 		return result, nil
 
 	case ModeAggregateStream:
-		aggregated, err := e.aggregateStream(plan.UpstreamProtocol, resp.Body)
+		aggregated, searchResults, err := e.aggregateStream(plan.UpstreamProtocol, resp.Body)
 		resp.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("aggregate stream: %w", err)
 		}
 		aggregated.UpstreamProtocol = plan.UpstreamProtocol
 		result.AggregatedResponse = aggregated
+		result.WebSearchResults = searchResults
 		return result, nil
 
 	default:
@@ -137,7 +141,7 @@ func (e *Executor) Execute(ctx context.Context, plan *ExecutionPlan) (*Execution
 
 // aggregateStream reads an SSE stream and collects canonical events into a
 // final CanonicalResponse.
-func (e *Executor) aggregateStream(protocol canonical.Protocol, body io.Reader) (*canonical.CanonicalResponse, error) {
+func (e *Executor) aggregateStream(protocol canonical.Protocol, body io.Reader) (*canonical.CanonicalResponse, []codec.WebSearchResult, error) {
 	state := &StreamAggregateState{}
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), MaxSSELineSize)
@@ -146,9 +150,15 @@ func (e *Executor) aggregateStream(protocol canonical.Protocol, body io.Reader) 
 	case canonical.ProtocolOpenAIChat:
 		for scanner.Scan() {
 			line := scanner.Text()
+			if strings.HasPrefix(line, "data: ") {
+				if results := codec.ParseOpenWebUISources(strings.TrimPrefix(line, "data: ")); results != nil {
+					state.WebSearchResults = results
+					continue
+				}
+			}
 			events, done, err := codec.DecodeOpenAIStreamLine(line)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			for _, ev := range events {
 				state.Apply(ev)
@@ -171,7 +181,7 @@ func (e *Executor) aggregateStream(protocol canonical.Protocol, body io.Reader) 
 				data := strings.TrimPrefix(line, "data: ")
 				events, err := dec.DecodeLine(currentEventType, data)
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				for _, ev := range events {
 					state.Apply(ev)
@@ -179,16 +189,15 @@ func (e *Executor) aggregateStream(protocol canonical.Protocol, body io.Reader) 
 				currentEventType = ""
 				continue
 			}
-			// Empty lines or comments — skip.
 		}
 
 	default:
-		return nil, fmt.Errorf("unsupported upstream protocol for aggregation: %s", protocol)
+		return nil, nil, fmt.Errorf("unsupported upstream protocol for aggregation: %s", protocol)
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan stream: %w", err)
+		return nil, nil, fmt.Errorf("scan stream: %w", err)
 	}
 
-	return state.Finalize(), nil
+	return state.Finalize(), state.WebSearchResults, nil
 }

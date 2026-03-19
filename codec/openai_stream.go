@@ -64,6 +64,10 @@ func DecodeOpenAIStreamLine(line string) ([]canonical.CanonicalStreamEvent, bool
 
 	var chunk openAIStreamChunk
 	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+		// Non-OpenAI JSON (e.g. OpenWebUI sources); skip.
+		if json.Valid([]byte(data)) {
+			return nil, false, nil
+		}
 		return nil, false, fmt.Errorf("decode openai stream chunk: %w", err)
 	}
 

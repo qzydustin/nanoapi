@@ -375,7 +375,7 @@ func handleDirectNonStream(c *gin.Context, clientProto, upstreamProto canonical.
 		reqLog.WriteSection("upstream_response_body", string(result.Body))
 	}
 
-	injectWebSearchBlocks(resp, hasWebSearch, clientProto, upstreamProto)
+	injectWebSearchBlocks(resp, hasWebSearch, clientProto, upstreamProto, codec.ParseOpenWebUISources(string(result.Body)))
 
 	// Encode for client.
 	var clientBody []byte
@@ -404,7 +404,7 @@ func handleAggregateStream(c *gin.Context, clientProto, upstreamProto canonical.
 		reqLog.WriteSection("upstream_response_full", "mode: aggregate_stream")
 	}
 
-	injectWebSearchBlocks(resp, hasWebSearch, clientProto, upstreamProto)
+	injectWebSearchBlocks(resp, hasWebSearch, clientProto, upstreamProto, result.WebSearchResults)
 
 	var clientBody []byte
 	var err error
@@ -456,6 +456,7 @@ func handlePassthroughStream(c *gin.Context, clientProto, upstreamProto canonica
 func streamOpenAIToClient(scanner *bufio.Scanner, flusher http.Flusher, w io.Writer, clientProto canonical.Protocol, hasWebSearch bool, reqLog *requestLogger) *canonical.CanonicalUsage {
 	var usageResult *canonical.CanonicalUsage
 	webSearchInjected := false
+	var webSearchResults []codec.WebSearchResult
 
 	var openaiEnc *codec.OpenAIStreamEncoder
 	var anthEnc *codec.AnthropicStreamEncoder
@@ -469,6 +470,13 @@ func streamOpenAIToClient(scanner *bufio.Scanner, flusher http.Flusher, w io.Wri
 		line := scanner.Text()
 		if reqLog != nil && reqLog.debug {
 			reqLog.WriteSection("upstream_stream_full", line)
+		}
+		// Capture OpenWebUI sources before normal decoding.
+		if hasWebSearch && !webSearchInjected && strings.HasPrefix(line, "data: ") {
+			if results := codec.ParseOpenWebUISources(strings.TrimPrefix(line, "data: ")); results != nil {
+				webSearchResults = results
+				continue
+			}
 		}
 		events, done, err := codec.DecodeOpenAIStreamLine(line)
 		if err != nil {
@@ -487,9 +495,11 @@ func streamOpenAIToClient(scanner *bufio.Scanner, flusher http.Flusher, w io.Wri
 				if msgStart != "" {
 					fmt.Fprint(w, msgStart)
 				}
-				sse, n := codec.SynthesizeWebSearchSSE(anthEnc.BlockIdx())
-				fmt.Fprint(w, sse)
-				anthEnc.AdvanceBlockIdx(n)
+				for _, syntheticEv := range codec.SynthesizeWebSearchSSE(webSearchResults) {
+					if out := anthEnc.Encode(syntheticEv); out != "" {
+						fmt.Fprint(w, out)
+					}
+				}
 				flusher.Flush()
 				webSearchInjected = true
 			}
@@ -624,13 +634,13 @@ func commonErrorType(status int) string {
 
 // injectWebSearchBlocks prepends synthetic server_tool_use + web_search_tool_result
 // blocks when an Anthropic client made a web_search request through an OpenAI upstream.
-func injectWebSearchBlocks(resp *canonical.CanonicalResponse, hasWebSearch bool, clientProto, upstreamProto canonical.Protocol) {
+func injectWebSearchBlocks(resp *canonical.CanonicalResponse, hasWebSearch bool, clientProto, upstreamProto canonical.Protocol, results []codec.WebSearchResult) {
 	if !hasWebSearch || clientProto != canonical.ProtocolAnthropicMessage || upstreamProto != canonical.ProtocolOpenAIChat {
 		return
 	}
 	if len(resp.Output) == 0 {
 		return
 	}
-	toolUse, toolResult := codec.SynthesizeWebSearchBlocks()
+	toolUse, toolResult := codec.SynthesizeWebSearchBlocks(results)
 	resp.Output[0].Content = append([]canonical.CanonicalContentBlock{toolUse, toolResult}, resp.Output[0].Content...)
 }

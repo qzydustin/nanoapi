@@ -5,19 +5,21 @@ import (
 	"strings"
 
 	"github.com/qzydustin/nanoapi/canonical"
+	"github.com/qzydustin/nanoapi/codec"
 )
 
 // StreamAggregateState collects canonical stream events into a final
 // non-stream CanonicalResponse. Used for forced-stream aggregation.
 type StreamAggregateState struct {
-	ResponseID    string
-	Model         string
-	TextParts     []string
-	ThinkingParts []string
-	ToolCalls     []*toolCallState
-	RawBlocks     []*rawBlockState
-	StopReason    string
-	Usage         *canonical.CanonicalUsage
+	ResponseID       string
+	Model            string
+	TextParts        []string
+	ThinkingParts    []string
+	ToolCalls        []*toolCallState
+	RawBlocks        []*rawBlockState
+	WebSearchResults []codec.WebSearchResult
+	StopReason       string
+	Usage            *canonical.CanonicalUsage
 }
 
 // toolCallState tracks a single tool call being accumulated from streaming.

@@ -213,12 +213,12 @@ func (d *AnthropicStreamDecoder) DecodeLine(eventType string, data string) ([]ca
 
 // AnthropicStreamEncoder tracks state for client-side Anthropic SSE encoding.
 type AnthropicStreamEncoder struct {
-	messageStarted bool
-	blockIdx       int
-	blockOpen      bool
-	blockType      string
-	stopReason     string
-	usage          *canonical.CanonicalUsage
+	messageStarted      bool
+	blockIdx            int
+	blockOpen           bool
+	blockType           string
+	stopReason          string
+	usage               *canonical.CanonicalUsage
 	messageDeltaEmitted bool
 }
 
@@ -226,9 +226,6 @@ type AnthropicStreamEncoder struct {
 func NewAnthropicStreamEncoder() *AnthropicStreamEncoder {
 	return &AnthropicStreamEncoder{}
 }
-
-func (e *AnthropicStreamEncoder) BlockIdx() int      { return e.blockIdx }
-func (e *AnthropicStreamEncoder) AdvanceBlockIdx(n int) { e.blockIdx += n }
 
 // Encode converts a canonical stream event into Anthropic SSE line(s).
 func (e *AnthropicStreamEncoder) Encode(event canonical.CanonicalStreamEvent) string {
@@ -316,15 +313,18 @@ func (e *AnthropicStreamEncoder) Encode(event canonical.CanonicalStreamEvent) st
 
 	case canonical.EventRawBlockStart:
 		e.closeBlock(&lines)
-		lines = append(lines, "event: content_block_start\ndata: " + string(event.RawJSON) + "\n\n")
+		rawWithIndex := injectIndex(event.RawJSON, e.blockIdx)
+		lines = append(lines, "event: content_block_start\ndata: " + string(rawWithIndex) + "\n\n")
 		e.blockOpen = true
 		e.blockType = "raw"
 
 	case canonical.EventRawBlockDelta:
-		lines = append(lines, "event: content_block_delta\ndata: " + string(event.RawJSON) + "\n\n")
+		rawWithIndex := injectIndex(event.RawJSON, e.blockIdx)
+		lines = append(lines, "event: content_block_delta\ndata: " + string(rawWithIndex) + "\n\n")
 
 	case canonical.EventRawBlockStop:
-		lines = append(lines, "event: content_block_stop\ndata: " + string(event.RawJSON) + "\n\n")
+		stop := map[string]any{"type": "content_block_stop", "index": e.blockIdx}
+		lines = append(lines, anthropicSSE("content_block_stop", stop))
 		e.blockOpen = false
 		e.blockType = ""
 		e.blockIdx++
@@ -428,4 +428,19 @@ func (e *AnthropicStreamEncoder) emitMessageDelta() string {
 
 func anthropicSSE(event string, payload any) string {
 	return "event: " + event + "\ndata: " + mustJSON(payload) + "\n\n"
+}
+
+// injectIndex sets or overrides the "index" field in a JSON object.
+func injectIndex(raw json.RawMessage, idx int) json.RawMessage {
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(raw, &obj) != nil {
+		return raw
+	}
+	idxBytes, _ := json.Marshal(idx)
+	obj["index"] = idxBytes
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return raw
+	}
+	return out
 }
