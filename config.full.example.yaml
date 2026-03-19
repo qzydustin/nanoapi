@@ -1,0 +1,118 @@
+# Full example covering the main config fields supported by nanoapi.
+# Use config.example.yaml for a smaller starting point.
+
+server:
+  host: 0.0.0.0
+  port: 8080
+
+storage:
+  # SQLite is the only supported storage backend at the moment.
+  driver: sqlite
+  dsn: /app/data/nanoapi.db
+
+tokens:
+  # Static API tokens used for both model access and /api self-query.
+  - id: default
+    name: default
+    key: nk_replace_me
+  - id: internal
+    name: internal
+    key: nk_replace_me_too
+
+providers:
+  # The fields below are provider-generic unless noted otherwise:
+  # - name
+  # - protocol
+  # - base_url
+  # - api_key
+  # - priority
+  # - headers
+  # - force_stream
+  # - models
+  # - override.defaults.max_tokens / temperature / top_p / stop
+  #
+  # The protocol-specific part is mainly override.reasoning:
+  # - mode / budget_tokens are Anthropic-oriented
+  # - effort is OpenAI-oriented
+
+  # Anthropic-compatible upstream provider.
+  - name: anthropic-main
+    protocol: anthropic_messages
+    base_url: https://api.anthropic.com
+    api_key: your-anthropic-api-key
+    # Higher priority wins when multiple providers support the same client model.
+    priority: 100
+    headers:
+      # Static headers forwarded to the upstream request as-is.
+      # nanoapi does not implement special logic for these headers.
+      anthropic-version: "2023-06-01"
+      anthropic-beta: prompt-caching-2024-07-31
+    # If true, non-stream client requests may still use upstream streaming internally.
+    force_stream: true
+    models:
+      # client model name -> upstream model name
+      claude-haiku-4-5-20251001: claude-haiku-4-5-20251001
+      claude-opus-4-6: claude-opus-4-6
+      gpt-4o-mini: claude-haiku-4-5-20251001
+    override:
+      defaults:
+        # Provider-level parameter overrides applied after provider selection.
+        # max_tokens is a canonical field:
+        # - Anthropic upstream: max_tokens
+        # - OpenAI upstream: max_completion_tokens
+        max_tokens: 4096
+        temperature: 0.7
+        top_p: 0.95
+        stop:
+          - "END"
+          - "STOP"
+        reasoning:
+          # Anthropic-style reasoning / thinking control.
+          # Use `mode: disabled` to explicitly disable thinking for this provider.
+          mode: enabled
+          budget_tokens: 2048
+
+  # OpenAI-compatible upstream provider.
+  # This example also shows ordered override rules on top of provider defaults.
+  - name: openai-main
+    protocol: openai_chat
+    base_url: https://api.openai.com
+    api_key: your-openai-api-key
+    priority: 110
+    headers:
+      OpenAI-Organization: org_replace_me
+    force_stream: false
+    models:
+      gpt-4o-mini: gpt-4o-mini
+      gpt-5.4: gpt-5.4
+      claude-haiku-4-5-20251001: gpt-5.4
+      claude-opus-4-6: gpt-5.4
+      claude-sonnet-4-6: gpt-5.4
+    override:
+      defaults:
+        max_tokens: 4096
+        reasoning:
+          effort: medium
+      rules:
+        # Rules are evaluated top-to-bottom.
+        # If multiple rules match, later ones override earlier ones.
+        - target:
+            client_model: gpt-5.4
+          params:
+            reasoning:
+              effort: high
+        - target:
+            client_model: claude-haiku-4-5-20251001
+          params:
+            reasoning:
+              effort: low
+        - target:
+            client_model: claude-sonnet-4-6
+          params:
+            reasoning:
+              effort: medium
+        - target:
+            client_model: claude-opus-4-6
+          params:
+            reasoning:
+              effort: xhigh

@@ -1,0 +1,1 @@
+{"model":"gpt-4o","tools":[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object"}}}],"messages":[{"role":"user","content":"weather?"}]}

@@ -1,0 +1,33 @@
+{
+  "model": "claude-3-7-sonnet-20250219",
+  "max_tokens": 1024,
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is the weather?"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_123",
+          "name": "get_weather",
+          "input": {
+            "location": "NYC"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_123",
+          "content": "Sunny, 72°F"
+        }
+      ]
+    }
+  ]
+}

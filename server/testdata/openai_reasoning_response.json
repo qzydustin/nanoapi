@@ -1,0 +1,18 @@
+{
+  "id": "chatcmpl-reasoning",
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "mapped"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 6,
+    "completion_tokens": 4,
+    "total_tokens": 10
+  }
+}

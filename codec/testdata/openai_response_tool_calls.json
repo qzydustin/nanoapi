@@ -1,0 +1,23 @@
+{
+  "id": "chatcmpl-123",
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "f",
+              "arguments": "{\"k\":\"v\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ]
+}

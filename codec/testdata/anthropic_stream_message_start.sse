@@ -1,0 +1,3 @@
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_123","model":"claude-3","role":"assistant","content":[]}}
+

@@ -1,0 +1,21 @@
+{
+  "id": "msg_tool",
+  "type": "message",
+  "model": "claude-3-7-sonnet",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_1",
+      "name": "get_weather",
+      "input": {
+        "location": "NYC"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "usage": {
+    "input_tokens": 12,
+    "output_tokens": 4
+  }
+}

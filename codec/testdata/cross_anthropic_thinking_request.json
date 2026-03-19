@@ -1,0 +1,14 @@
+{
+  "model": "claude-3-7-sonnet-20250219",
+  "max_tokens": 1024,
+  "thinking": {
+    "type": "enabled",
+    "budget_tokens": 2048
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello"
+    }
+  ]
+}

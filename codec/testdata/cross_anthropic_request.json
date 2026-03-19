@@ -1,0 +1,11 @@
+{
+  "model": "claude-3-7-sonnet-20250219",
+  "max_tokens": 1024,
+  "system": "Be helpful.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello"
+    }
+  ]
+}

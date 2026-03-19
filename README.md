@@ -1,0 +1,125 @@
+# nanoapi
+
+`nanoapi` is a lightweight LLM gateway that routes requests to different upstream providers from a single config file and records internal usage / logs.
+
+Supported endpoints:
+
+- OpenAI Chat Completions compatible endpoint: `/v1/chat/completions`
+- Anthropic Messages compatible endpoint: `/v1/messages`
+- Gateway API endpoints:
+  - `/api/health`
+  - `/api/usage`
+  - `/api/logs`
+
+## Features
+
+- Provider selection by `model`, with `priority` used when multiple providers match
+- Support for `openai_chat` and `anthropic_messages`
+- Streaming, non-streaming, and `force_stream` aggregation
+- OpenAI / Anthropic protocol translation
+- Static token configuration from `config.yaml`
+- SQLite persistence for usage / logs
+
+## Configuration
+
+Create `config.yaml` from the example:
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+Fill in at least:
+
+- `tokens[].key`
+- `providers[].api_key`
+
+For Docker Compose, the default SQLite path is `/app/data/nanoapi.db`.
+Provider overrides use `override.defaults` and optional ordered `override.rules`.
+
+## Run Locally
+
+```bash
+go run . ./config.yaml
+```
+
+Or:
+
+```bash
+go build -o nanoapi .
+./nanoapi ./config.yaml
+```
+
+## Docker Compose
+
+```bash
+docker compose up --build -d
+```
+
+View logs:
+
+```bash
+docker compose logs -f nanoapi
+```
+
+Stop:
+
+```bash
+docker compose down
+```
+
+## API Examples
+
+```bash
+curl http://127.0.0.1:8080/api/health
+```
+
+```bash
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer nk_replace_me" \
+  -d '{
+    "model": "claude-haiku-4-5-20251001",
+    "messages": [
+      {"role": "user", "content": "hello"}
+    ]
+  }'
+```
+
+```bash
+curl http://127.0.0.1:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer nk_replace_me" \
+  -d '{
+    "model": "claude-haiku-4-5-20251001",
+    "max_tokens": 256,
+    "messages": [
+      {"role": "user", "content": "hello"}
+    ]
+  }'
+```
+
+```bash
+curl http://127.0.0.1:8080/api/usage \
+  -H "Authorization: Bearer nk_replace_me"
+```
+
+```bash
+curl http://127.0.0.1:8080/api/logs \
+  -H "Authorization: Bearer nk_replace_me"
+```
+
+## Database
+
+The database is used only for usage / log persistence: token ID, timestamp, client / upstream protocol, client / upstream model, token usage, cache usage, reasoning tokens, success / error code, and latency.
+
+Tokens, providers, and API keys are loaded from `config.yaml`.
+
+## Testing
+
+```bash
+go test ./...
+```
+
+## Current Scope
+
+This project currently follows a config-driven gateway model: no admin web UI, no dynamic token CRUD API, and configuration changes are applied by editing `config.yaml` and restarting the service.

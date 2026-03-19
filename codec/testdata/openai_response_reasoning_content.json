@@ -1,0 +1,19 @@
+{
+  "id": "chatcmpl-123",
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "The answer is 42.",
+        "reasoning_content": "Let me think step by step..."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 10,
+    "completion_tokens": 20,
+    "total_tokens": 30
+  }
+}

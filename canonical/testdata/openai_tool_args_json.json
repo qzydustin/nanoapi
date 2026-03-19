@@ -1,0 +1,18 @@
+{
+  "model": "gpt-4o",
+  "messages": [
+    {
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "type": "function",
+          "function": {
+            "name": "f",
+            "arguments": "{\"key\":\"value\"}"
+          }
+        }
+      ]
+    }
+  ]
+}
