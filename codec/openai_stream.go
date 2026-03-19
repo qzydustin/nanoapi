@@ -25,10 +25,11 @@ type openAIStreamChoice struct {
 }
 
 type openAIStreamDelta struct {
-	Role             string           `json:"role,omitempty"`
-	Content          *string          `json:"content,omitempty"`
-	ReasoningContent *string          `json:"reasoning_content,omitempty"`
-	ToolCalls        []openAIStreamTC `json:"tool_calls,omitempty"`
+	Role             string                `json:"role,omitempty"`
+	Content          *string               `json:"content,omitempty"`
+	ReasoningContent *string               `json:"reasoning_content,omitempty"`
+	ThinkingBlocks   []openAIThinkingBlock `json:"thinking_blocks,omitempty"`
+	ToolCalls        []openAIStreamTC      `json:"tool_calls,omitempty"`
 }
 
 type openAIStreamTC struct {
@@ -86,6 +87,16 @@ func DecodeOpenAIStreamLine(line string) ([]canonical.CanonicalStreamEvent, bool
 				ResponseID: chunk.ID,
 				Model:      chunk.Model,
 			})
+		}
+		for _, tb := range d.ThinkingBlocks {
+			if tb.Signature != nil && *tb.Signature != "" {
+				events = append(events, canonical.CanonicalStreamEvent{
+					Type:       canonical.EventThinkingSignature,
+					Signature:  *tb.Signature,
+					ResponseID: chunk.ID,
+					Model:      chunk.Model,
+				})
+			}
 		}
 
 		// Text delta
@@ -187,24 +198,10 @@ func (e *OpenAIStreamEncoder) Encode(event canonical.CanonicalStreamEvent) strin
 
 	switch event.Type {
 	case canonical.EventTextDelta:
-		chunk := map[string]any{
-			"id": e.chunkID, "object": "chat.completion.chunk", "model": e.model,
-			"choices": []map[string]any{{
-				"index": 0,
-				"delta": map[string]any{"content": event.Text},
-			}},
-		}
-		return "data: " + mustJSON(chunk) + "\n\n"
+		return e.choiceChunk(map[string]any{"content": event.Text}, nil)
 
 	case canonical.EventThinkingDelta:
-		chunk := map[string]any{
-			"id": e.chunkID, "object": "chat.completion.chunk", "model": e.model,
-			"choices": []map[string]any{{
-				"index": 0,
-				"delta": map[string]any{"reasoning_content": event.Text},
-			}},
-		}
-		return "data: " + mustJSON(chunk) + "\n\n"
+		return e.choiceChunk(map[string]any{"reasoning_content": event.Text}, nil)
 
 	case canonical.EventToolCallStart:
 		tc := map[string]any{
@@ -213,28 +210,14 @@ func (e *OpenAIStreamEncoder) Encode(event canonical.CanonicalStreamEvent) strin
 			"type":     "function",
 			"function": map[string]any{"name": event.ToolCallName, "arguments": ""},
 		}
-		chunk := map[string]any{
-			"id": e.chunkID, "object": "chat.completion.chunk", "model": e.model,
-			"choices": []map[string]any{{
-				"index": 0,
-				"delta": map[string]any{"tool_calls": []map[string]any{tc}},
-			}},
-		}
-		return "data: " + mustJSON(chunk) + "\n\n"
+		return e.choiceChunk(map[string]any{"tool_calls": []map[string]any{tc}}, nil)
 
 	case canonical.EventToolCallDelta:
 		tc := map[string]any{
 			"index":    e.toolCallIdx,
 			"function": map[string]any{"arguments": event.ArgumentsDelta},
 		}
-		chunk := map[string]any{
-			"id": e.chunkID, "object": "chat.completion.chunk", "model": e.model,
-			"choices": []map[string]any{{
-				"index": 0,
-				"delta": map[string]any{"tool_calls": []map[string]any{tc}},
-			}},
-		}
-		return "data: " + mustJSON(chunk) + "\n\n"
+		return e.choiceChunk(map[string]any{"tool_calls": []map[string]any{tc}}, nil)
 
 	case canonical.EventToolCallEnd:
 		e.toolCallIdx++
@@ -242,15 +225,7 @@ func (e *OpenAIStreamEncoder) Encode(event canonical.CanonicalStreamEvent) strin
 
 	case canonical.EventMessageStop:
 		fr := denormalizeOpenAIStopReason(event.StopReason)
-		chunk := map[string]any{
-			"id": e.chunkID, "object": "chat.completion.chunk", "model": e.model,
-			"choices": []map[string]any{{
-				"index":         0,
-				"delta":         map[string]any{},
-				"finish_reason": fr,
-			}},
-		}
-		return "data: " + mustJSON(chunk) + "\n\n"
+		return e.choiceChunk(map[string]any{}, fr)
 
 	case canonical.EventUsageFinal:
 		u := map[string]any{}
@@ -277,12 +252,11 @@ func (e *OpenAIStreamEncoder) Encode(event canonical.CanonicalStreamEvent) strin
 				}
 			}
 		}
-		chunk := map[string]any{
+		return openAISSE(map[string]any{
 			"id": e.chunkID, "object": "chat.completion.chunk", "model": e.model,
 			"choices": []any{},
 			"usage":   u,
-		}
-		return "data: " + mustJSON(chunk) + "\n\n"
+		})
 	}
 
 	return ""
@@ -291,6 +265,26 @@ func (e *OpenAIStreamEncoder) Encode(event canonical.CanonicalStreamEvent) strin
 // Done returns the final [DONE] SSE line.
 func (e *OpenAIStreamEncoder) Done() string {
 	return "data: [DONE]\n\n"
+}
+
+func (e *OpenAIStreamEncoder) choiceChunk(delta map[string]any, finishReason any) string {
+	choice := map[string]any{
+		"index": 0,
+		"delta": delta,
+	}
+	if finishReason != nil {
+		choice["finish_reason"] = finishReason
+	}
+	return openAISSE(map[string]any{
+		"id":      e.chunkID,
+		"object":  "chat.completion.chunk",
+		"model":   e.model,
+		"choices": []map[string]any{choice},
+	})
+}
+
+func openAISSE(chunk any) string {
+	return "data: " + mustJSON(chunk) + "\n\n"
 }
 
 func mustJSON(v any) string {

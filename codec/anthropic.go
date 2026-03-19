@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/qzydustin/nanoapi/canonical"
+	"github.com/qzydustin/nanoapi/config"
 )
 
 // ---------------------------------------------------------------------------
@@ -22,6 +23,11 @@ type anthropicOutRequest struct {
 	StopSequences []string              `json:"stop_sequences,omitempty"`
 	Tools         []anthropicOutTool    `json:"tools,omitempty"`
 	Thinking      *anthropicOutThinking `json:"thinking,omitempty"`
+	OutputConfig  *anthropicOutConfig   `json:"output_config,omitempty"`
+}
+
+type anthropicOutConfig struct {
+	Effort *string `json:"effort,omitempty"`
 }
 
 type anthropicOutSys struct {
@@ -74,11 +80,12 @@ type anthropicOutThinking struct {
 	BudgetTokens *int   `json:"budget_tokens,omitempty"`
 }
 
+
 const defaultAnthropicMaxTokens = 4096
 
 // EncodeAnthropicRequest converts a CanonicalRequest into an Anthropic
 // Messages JSON request body.
-func EncodeAnthropicRequest(req *canonical.CanonicalRequest, upstreamModel string, stream bool) ([]byte, error) {
+func EncodeAnthropicRequest(req *canonical.CanonicalRequest, upstreamModel string, stream bool, capability *config.ReasoningCapability) ([]byte, error) {
 	maxTokens := defaultAnthropicMaxTokens
 	if req.Params.MaxTokens != nil {
 		maxTokens = *req.Params.MaxTokens
@@ -95,19 +102,11 @@ func EncodeAnthropicRequest(req *canonical.CanonicalRequest, upstreamModel strin
 
 	// Reasoning / thinking
 	if r := req.Params.Reasoning; r != nil {
-		thinkingType := r.Mode
-		if thinkingType == "" && r.Effort != nil {
-			thinkingType = "enabled"
-		}
-		if thinkingType != "" && thinkingType != "disabled" {
-			thinking := &anthropicOutThinking{Type: thinkingType}
-			if r.BudgetTokens != nil {
-				thinking.BudgetTokens = r.BudgetTokens
-			}
-			out.Thinking = thinking
+		out.Thinking, out.OutputConfig = buildAnthropicReasoning(r, capability)
+		if anthropicThinkingAllowsBudget(out.Thinking) {
 			// Anthropic requires max_tokens to be at least budget_tokens + some margin
-			if r.BudgetTokens != nil && maxTokens <= *r.BudgetTokens {
-				out.MaxTokens = *r.BudgetTokens + defaultAnthropicMaxTokens
+			if out.Thinking.BudgetTokens != nil && maxTokens <= *out.Thinking.BudgetTokens {
+				out.MaxTokens = *out.Thinking.BudgetTokens + defaultAnthropicMaxTokens
 			}
 		}
 	}
@@ -141,6 +140,52 @@ func EncodeAnthropicRequest(req *canonical.CanonicalRequest, upstreamModel strin
 	return json.Marshal(out)
 }
 
+func buildAnthropicReasoning(
+	r *canonical.CanonicalReasoning,
+	capability *config.ReasoningCapability,
+) (*anthropicOutThinking, *anthropicOutConfig) {
+	if r == nil {
+		return nil, nil
+	}
+
+	var thinking *anthropicOutThinking
+	var outputConfig *anthropicOutConfig
+	if r.Effort != nil {
+		switch normalizeEffortValue(*r.Effort) {
+		case "none":
+			thinking = &anthropicOutThinking{Type: "disabled"}
+		case "auto":
+			thinking = &anthropicOutThinking{Type: "adaptive"}
+		default:
+			thinking = &anthropicOutThinking{Type: "adaptive"}
+			if mappedEffort, ok := mapAnthropicEffort(*r.Effort, capability); ok {
+				outputConfig = &anthropicOutConfig{Effort: &mappedEffort}
+			}
+		}
+		if r.BudgetTokens != nil && anthropicThinkingAllowsBudget(thinking) {
+			thinking.BudgetTokens = r.BudgetTokens
+		}
+	}
+
+	thinkingType := r.Mode
+	if thinkingType == "" && r.Effort != nil && thinking != nil {
+		thinkingType = thinking.Type
+	}
+	if thinking == nil && thinkingType != "" {
+		thinking = &anthropicOutThinking{Type: thinkingType}
+		if r.BudgetTokens != nil {
+			thinking.BudgetTokens = r.BudgetTokens
+		}
+	}
+
+	return thinking, outputConfig
+}
+
+
+func anthropicThinkingAllowsBudget(thinking *anthropicOutThinking) bool {
+	return thinking != nil && thinking.Type != "disabled"
+}
+
 func encodeAnthropicMessage(m canonical.CanonicalMessage) anthropicOutMsg {
 	var blocks []anthropicOutBlock
 
@@ -168,22 +213,10 @@ func encodeAnthropicMessage(m canonical.CanonicalMessage) anthropicOutMsg {
 			}
 		case "tool_result":
 			if b.ToolResult != nil {
-				var content any
-				if len(b.ToolResult.Content) == 1 && b.ToolResult.Content[0].Type == "text" && b.ToolResult.Content[0].Text != nil {
-					content = *b.ToolResult.Content[0].Text
-				} else if len(b.ToolResult.Content) > 0 {
-					var innerBlocks []anthropicOutBlock
-					for _, c := range b.ToolResult.Content {
-						if c.Type == "text" && c.Text != nil {
-							innerBlocks = append(innerBlocks, anthropicOutBlock{Type: "text", Text: *c.Text})
-						}
-					}
-					content = innerBlocks
-				}
 				blocks = append(blocks, anthropicOutBlock{
 					Type:          "tool_result",
 					ToolUseID:     b.ToolResult.ToolCallID,
-					ResultContent: content,
+					ResultContent: encodeAnthropicToolResultContent(b.ToolResult.Content),
 				})
 			}
 		case "thinking":
@@ -205,18 +238,40 @@ func encodeAnthropicMessage(m canonical.CanonicalMessage) anthropicOutMsg {
 	return anthropicOutMsg{Role: role, Content: blocks}
 }
 
+func encodeAnthropicToolResultContent(blocks []canonical.CanonicalContentBlock) any {
+	if len(blocks) == 1 && blocks[0].Type == "text" && blocks[0].Text != nil {
+		return *blocks[0].Text
+	}
+
+	var innerBlocks []anthropicOutBlock
+	for _, b := range blocks {
+		switch b.Type {
+		case "text":
+			if b.Text != nil {
+				innerBlocks = append(innerBlocks, anthropicOutBlock{
+					Type: "text",
+					Text: *b.Text,
+				})
+			}
+		case "image":
+			if b.Image != nil {
+				innerBlocks = append(innerBlocks, anthropicOutBlock{
+					Type:   "image",
+					Source: encodeAnthropicImage(b.Image),
+				})
+			}
+		}
+	}
+
+	if len(innerBlocks) == 0 {
+		return nil
+	}
+	return innerBlocks
+}
+
 func encodeAnthropicImage(img *canonical.CanonicalImage) *anthropicOutImgSrc {
 	switch img.SourceType {
-	case "data_url":
-		src := &anthropicOutImgSrc{Type: "base64"}
-		if img.MediaType != nil {
-			src.MediaType = *img.MediaType
-		}
-		if img.Data != nil {
-			src.Data = *img.Data
-		}
-		return src
-	case "base64":
+	case "data_url", "base64":
 		src := &anthropicOutImgSrc{Type: "base64"}
 		if img.MediaType != nil {
 			src.MediaType = *img.MediaType
@@ -261,7 +316,8 @@ type anthropicRespBlock struct {
 	Input any    `json:"input,omitempty"`
 
 	// thinking
-	Thinking string `json:"thinking,omitempty"`
+	Thinking  string `json:"thinking,omitempty"`
+	Signature string `json:"signature,omitempty"`
 }
 
 type anthropicUsage struct {
@@ -304,7 +360,7 @@ func DecodeAnthropicResponse(body []byte) (*canonical.CanonicalResponse, error) 
 		case "thinking":
 			blocks = append(blocks, canonical.CanonicalContentBlock{
 				Type:     "thinking",
-				Thinking: &canonical.CanonicalThinkingBlock{Text: strPtr(b.Thinking)},
+				Thinking: &canonical.CanonicalThinkingBlock{Text: strPtr(b.Thinking), Signature: strPtr(b.Signature)},
 			})
 		}
 	}
@@ -314,7 +370,7 @@ func DecodeAnthropicResponse(body []byte) (*canonical.CanonicalResponse, error) 
 	}
 
 	if raw.StopReason != nil {
-		resp.StopReason = normalizeAnthropicStopReason(*raw.StopReason)
+		resp.StopReason = *raw.StopReason
 	}
 
 	if raw.Usage != nil {
@@ -339,18 +395,6 @@ func DecodeAnthropicResponse(body []byte) (*canonical.CanonicalResponse, error) 
 	return resp, nil
 }
 
-func normalizeAnthropicStopReason(reason string) string {
-	switch reason {
-	case "end_turn":
-		return "end_turn"
-	case "max_tokens":
-		return "max_tokens"
-	case "tool_use":
-		return "tool_use"
-	default:
-		return reason
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Anthropic Client Response Encoding (CanonicalResponse → Anthropic JSON)
@@ -378,7 +422,8 @@ type anthropicClientBlock struct {
 	Input any    `json:"input,omitempty"`
 
 	// thinking
-	Thinking string `json:"thinking,omitempty"`
+	Thinking  string `json:"thinking,omitempty"`
+	Signature string `json:"signature,omitempty"`
 }
 
 type anthropicClientUsage struct {
@@ -396,7 +441,7 @@ func EncodeAnthropicClientResponse(resp *canonical.CanonicalResponse) ([]byte, e
 		Type:       "message",
 		Role:       "assistant",
 		Model:      resp.Model,
-		StopReason: denormalizeAnthropicStopReason(resp.StopReason),
+		StopReason: resp.StopReason,
 	}
 
 	if len(resp.Output) > 0 {
@@ -419,10 +464,14 @@ func EncodeAnthropicClientResponse(resp *canonical.CanonicalResponse) ([]byte, e
 				}
 			case "thinking":
 				if b.Thinking != nil && b.Thinking.Text != nil {
-					out.Content = append(out.Content, anthropicClientBlock{
+					block := anthropicClientBlock{
 						Type:     "thinking",
 						Thinking: *b.Thinking.Text,
-					})
+					}
+					if b.Thinking.Signature != nil {
+						block.Signature = *b.Thinking.Signature
+					}
+					out.Content = append(out.Content, block)
 				}
 			}
 		}
@@ -448,10 +497,6 @@ func EncodeAnthropicClientResponse(resp *canonical.CanonicalResponse) ([]byte, e
 	return json.Marshal(out)
 }
 
-func denormalizeAnthropicStopReason(reason string) string {
-	// Canonical reasons map directly to Anthropic reasons in V1.
-	return reason
-}
 
 // ---------------------------------------------------------------------------
 // Helpers

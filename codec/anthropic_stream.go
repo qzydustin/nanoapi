@@ -86,9 +86,11 @@ func (d *AnthropicStreamDecoder) DecodeLine(eventType string, data string) ([]ca
 	case "content_block_delta":
 		var delta struct {
 			Delta struct {
-				Type string `json:"type"`
-				Text string `json:"text,omitempty"`
-				JSON string `json:"partial_json,omitempty"`
+				Type      string `json:"type"`
+				Text      string `json:"text,omitempty"`
+				Thinking  string `json:"thinking,omitempty"`
+				Signature string `json:"signature,omitempty"`
+				JSON      string `json:"partial_json,omitempty"`
 			} `json:"delta"`
 		}
 		if err := json.Unmarshal([]byte(data), &delta); err != nil {
@@ -102,9 +104,18 @@ func (d *AnthropicStreamDecoder) DecodeLine(eventType string, data string) ([]ca
 				Text: delta.Delta.Text,
 			})
 		case "thinking_delta":
+			text := delta.Delta.Thinking
+			if text == "" {
+				text = delta.Delta.Text
+			}
 			events = append(events, canonical.CanonicalStreamEvent{
 				Type: canonical.EventThinkingDelta,
-				Text: delta.Delta.Text,
+				Text: text,
+			})
+		case "signature_delta":
+			events = append(events, canonical.CanonicalStreamEvent{
+				Type:      canonical.EventThinkingSignature,
+				Signature: delta.Delta.Signature,
 			})
 		case "input_json_delta":
 			events = append(events, canonical.CanonicalStreamEvent{
@@ -134,7 +145,7 @@ func (d *AnthropicStreamDecoder) DecodeLine(eventType string, data string) ([]ca
 		if msg.Delta.StopReason != "" {
 			events = append(events, canonical.CanonicalStreamEvent{
 				Type:       canonical.EventMessageStop,
-				StopReason: normalizeAnthropicStopReason(msg.Delta.StopReason),
+				StopReason: msg.Delta.StopReason,
 			})
 		}
 		if msg.Usage != nil {
@@ -179,6 +190,10 @@ type AnthropicStreamEncoder struct {
 	messageStarted bool
 	blockIdx       int
 	blockOpen      bool
+	blockType      string
+	stopReason     string
+	usage          *canonical.CanonicalUsage
+	messageDeltaEmitted bool
 }
 
 // NewAnthropicStreamEncoder creates a new encoder for client-side Anthropic SSE.
@@ -195,14 +210,20 @@ func (e *AnthropicStreamEncoder) Encode(event canonical.CanonicalStreamEvent) st
 		msgStart := map[string]any{
 			"type": "message_start",
 			"message": map[string]any{
-				"id":      event.ResponseID,
-				"type":    "message",
-				"role":    "assistant",
-				"model":   event.Model,
-				"content": []any{},
+				"id":            event.ResponseID,
+				"type":          "message",
+				"role":          "assistant",
+				"model":         event.Model,
+				"content":       []any{},
+				"stop_reason":   nil,
+				"stop_sequence": nil,
+				"usage": map[string]any{
+					"input_tokens":  0,
+					"output_tokens": 0,
+				},
 			},
 		}
-		lines = append(lines, "event: message_start\ndata: "+mustJSON(msgStart)+"\n\n")
+		lines = append(lines, anthropicSSE("message_start", msgStart))
 		e.messageStarted = true
 	}
 
@@ -211,16 +232,13 @@ func (e *AnthropicStreamEncoder) Encode(event canonical.CanonicalStreamEvent) st
 		if event.Text == "" {
 			break // skip empty metadata-only events
 		}
-		if !e.blockOpen || true {
-			// Always ensure we have an open text block.
-			e.ensureBlockStart(&lines, "text")
-		}
+		e.ensureBlockStart(&lines, "text")
 		delta := map[string]any{
 			"type":  "content_block_delta",
 			"index": e.blockIdx,
 			"delta": map[string]any{"type": "text_delta", "text": event.Text},
 		}
-		lines = append(lines, "event: content_block_delta\ndata: "+mustJSON(delta)+"\n\n")
+		lines = append(lines, anthropicSSE("content_block_delta", delta))
 
 	case canonical.EventThinkingDelta:
 		e.ensureBlockStart(&lines, "thinking")
@@ -229,7 +247,19 @@ func (e *AnthropicStreamEncoder) Encode(event canonical.CanonicalStreamEvent) st
 			"index": e.blockIdx,
 			"delta": map[string]any{"type": "thinking_delta", "thinking": event.Text},
 		}
-		lines = append(lines, "event: content_block_delta\ndata: "+mustJSON(delta)+"\n\n")
+		lines = append(lines, anthropicSSE("content_block_delta", delta))
+
+	case canonical.EventThinkingSignature:
+		e.ensureBlockStart(&lines, "thinking")
+		if event.Signature == "" {
+			break
+		}
+		delta := map[string]any{
+			"type":  "content_block_delta",
+			"index": e.blockIdx,
+			"delta": map[string]any{"type": "signature_delta", "signature": event.Signature},
+		}
+		lines = append(lines, anthropicSSE("content_block_delta", delta))
 
 	case canonical.EventToolCallStart:
 		e.closeBlock(&lines)
@@ -241,7 +271,7 @@ func (e *AnthropicStreamEncoder) Encode(event canonical.CanonicalStreamEvent) st
 				"input": map[string]any{},
 			},
 		}
-		lines = append(lines, "event: content_block_start\ndata: "+mustJSON(start)+"\n\n")
+		lines = append(lines, anthropicSSE("content_block_start", start))
 		e.blockOpen = true
 
 	case canonical.EventToolCallDelta:
@@ -250,37 +280,23 @@ func (e *AnthropicStreamEncoder) Encode(event canonical.CanonicalStreamEvent) st
 			"index": e.blockIdx,
 			"delta": map[string]any{"type": "input_json_delta", "partial_json": event.ArgumentsDelta},
 		}
-		lines = append(lines, "event: content_block_delta\ndata: "+mustJSON(delta)+"\n\n")
+		lines = append(lines, anthropicSSE("content_block_delta", delta))
 
 	case canonical.EventToolCallEnd:
 		e.closeBlock(&lines)
 
 	case canonical.EventMessageStop:
 		e.closeBlock(&lines)
-		stop := map[string]any{
-			"type":  "message_delta",
-			"delta": map[string]any{"stop_reason": denormalizeAnthropicStopReason(event.StopReason)},
+		e.stopReason = event.StopReason
+		if e.usage != nil && !e.messageDeltaEmitted {
+			lines = append(lines, e.emitMessageDelta())
 		}
-		lines = append(lines, "event: message_delta\ndata: "+mustJSON(stop)+"\n\n")
 
 	case canonical.EventUsageFinal:
-		u := map[string]any{}
-		if event.Usage != nil {
-			if event.Usage.InputTokens != nil {
-				u["input_tokens"] = *event.Usage.InputTokens
-			}
-			if event.Usage.OutputTokens != nil {
-				u["output_tokens"] = *event.Usage.OutputTokens
-			}
-			if event.Usage.CacheWriteTokens != nil {
-				u["cache_creation_input_tokens"] = *event.Usage.CacheWriteTokens
-			}
-			if event.Usage.CacheReadTokens != nil {
-				u["cache_read_input_tokens"] = *event.Usage.CacheReadTokens
-			}
+		e.usage = event.Usage
+		if e.stopReason != "" && !e.messageDeltaEmitted {
+			lines = append(lines, e.emitMessageDelta())
 		}
-		stop := map[string]any{"type": "message_delta", "usage": u}
-		lines = append(lines, "event: message_delta\ndata: "+mustJSON(stop)+"\n\n")
 	}
 
 	return strings.Join(lines, "")
@@ -290,13 +306,19 @@ func (e *AnthropicStreamEncoder) Encode(event canonical.CanonicalStreamEvent) st
 func (e *AnthropicStreamEncoder) Done() string {
 	var lines []string
 	e.closeBlock(&lines)
+	if !e.messageDeltaEmitted && (e.stopReason != "" || e.usage != nil) {
+		lines = append(lines, e.emitMessageDelta())
+	}
 	lines = append(lines, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
 	return strings.Join(lines, "")
 }
 
 func (e *AnthropicStreamEncoder) ensureBlockStart(lines *[]string, blockType string) {
 	if e.blockOpen {
-		return
+		if e.blockType == blockType {
+			return
+		}
+		e.closeBlock(lines)
 	}
 	start := map[string]any{
 		"type":          "content_block_start",
@@ -305,9 +327,12 @@ func (e *AnthropicStreamEncoder) ensureBlockStart(lines *[]string, blockType str
 	}
 	if blockType == "text" {
 		start["content_block"] = map[string]any{"type": "text", "text": ""}
+	} else if blockType == "thinking" {
+		start["content_block"] = map[string]any{"type": "thinking", "thinking": ""}
 	}
-	*lines = append(*lines, "event: content_block_start\ndata: "+mustJSON(start)+"\n\n")
+	*lines = append(*lines, anthropicSSE("content_block_start", start))
 	e.blockOpen = true
+	e.blockType = blockType
 }
 
 func (e *AnthropicStreamEncoder) closeBlock(lines *[]string) {
@@ -315,7 +340,48 @@ func (e *AnthropicStreamEncoder) closeBlock(lines *[]string) {
 		return
 	}
 	stop := map[string]any{"type": "content_block_stop", "index": e.blockIdx}
-	*lines = append(*lines, "event: content_block_stop\ndata: "+mustJSON(stop)+"\n\n")
+	*lines = append(*lines, anthropicSSE("content_block_stop", stop))
 	e.blockOpen = false
+	e.blockType = ""
 	e.blockIdx++
+}
+
+
+func (e *AnthropicStreamEncoder) emitMessageDelta() string {
+	u := map[string]any{
+		"input_tokens":  0,
+		"output_tokens": 0,
+	}
+	if e.usage != nil {
+		if e.usage.InputTokens != nil {
+			u["input_tokens"] = *e.usage.InputTokens
+		}
+		if e.usage.OutputTokens != nil {
+			u["output_tokens"] = *e.usage.OutputTokens
+		}
+		if e.usage.CacheWriteTokens != nil {
+			u["cache_creation_input_tokens"] = *e.usage.CacheWriteTokens
+		}
+		if e.usage.CacheReadTokens != nil {
+			u["cache_read_input_tokens"] = *e.usage.CacheReadTokens
+		}
+	}
+	stopReason := e.stopReason
+	if stopReason == "" {
+		stopReason = "end_turn"
+	}
+	msg := map[string]any{
+		"type": "message_delta",
+		"delta": map[string]any{
+			"stop_reason":   stopReason,
+			"stop_sequence": nil,
+		},
+		"usage": u,
+	}
+	e.messageDeltaEmitted = true
+	return anthropicSSE("message_delta", msg)
+}
+
+func anthropicSSE(event string, payload any) string {
+	return "event: " + event + "\ndata: " + mustJSON(payload) + "\n\n"
 }
