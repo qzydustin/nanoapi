@@ -110,8 +110,14 @@ func ProxyHandler(
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodyBytes)
 		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {
-			respondError(c, clientProtocol, http.StatusBadRequest, "failed to read request body")
-			recordUsage(usageSvc, tc, startTime, clientProtocol, upstreamProtocol, "", upstreamModel, false, usageErrorCode(http.StatusBadRequest), nil)
+			status := http.StatusBadRequest
+			msg := "failed to read request body"
+			if err.Error() == "http: request body too large" {
+				status = http.StatusRequestEntityTooLarge
+				msg = "request body too large"
+			}
+			respondError(c, clientProtocol, status, msg)
+			recordUsage(usageSvc, tc, startTime, clientProtocol, upstreamProtocol, "", upstreamModel, false, usageErrorCode(status), nil)
 			return
 		}
 		if reqLog != nil && reqLog.debug {
