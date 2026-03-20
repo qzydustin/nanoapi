@@ -32,6 +32,17 @@ type CanonicalParams struct {
 	Reasoning *CanonicalReasoning
 }
 
+// Clone returns a deep copy of CanonicalParams so that ApplyOverride on the
+// clone does not mutate the original (Reasoning is modified in-place).
+func (p CanonicalParams) Clone() CanonicalParams {
+	out := p
+	if p.Reasoning != nil {
+		r := *p.Reasoning
+		out.Reasoning = &r
+	}
+	return out
+}
+
 // CanonicalReasoning represents the request-side reasoning / thinking config.
 type CanonicalReasoning struct {
 	Mode         string  // "disabled", "enabled", "adaptive"

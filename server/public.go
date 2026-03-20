@@ -144,7 +144,7 @@ func ProxyHandler(
 		}
 
 		// Save original params so each attempt starts from a clean state.
-		originalParams := req.Params
+		originalParams := req.Params.Clone()
 
 		hasWebSearch := false
 		for _, t := range req.Tools {
@@ -160,7 +160,7 @@ func ProxyHandler(
 
 		for i, selection := range selections {
 			// 4. Reset params and apply this provider's overrides.
-			req.Params = originalParams
+			req.Params = originalParams.Clone()
 			provider.ApplyOverride(&req.Params, selection.Override)
 
 			// 5. Determine execution mode.
@@ -268,7 +268,6 @@ func ProxyHandler(
 				recordUsage(usageSvc, tc, startTime, clientProtocol, upstreamProtocol, req.ClientModel, upstreamModel, false, usageErrorCode(statusCode), nil)
 				return
 			}
-			cancel()
 
 			// 9. Route by execution mode.
 			var respUsage *canonical.CanonicalUsage
@@ -283,6 +282,10 @@ func ProxyHandler(
 			case execute.ModePassthroughStream:
 				respUsage = handlePassthroughStream(c, clientProtocol, upstreamProtocol, hasWebSearch, result, reqLog)
 			}
+
+			// Cancel context after response handling (not before), so passthrough
+			// streams can finish reading from the upstream connection.
+			cancel()
 
 			// 10. Record usage (non-fatal).
 			status := c.Writer.Status()
