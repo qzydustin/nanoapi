@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/qzydustin/nanoapi/canonical"
@@ -19,10 +20,21 @@ func NewRouter(
 	selector *provider.Selector,
 	executor *execute.Executor,
 	logCfg config.LoggingConfig,
+	serverCfg config.ServerConfig,
 ) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
+
+	upstreamTimeout := 300 * time.Second
+	if serverCfg.TimeoutSeconds > 0 {
+		upstreamTimeout = time.Duration(serverCfg.TimeoutSeconds) * time.Second
+	}
+
+	var maxBodyBytes int64 = 10 * 1024 * 1024 // 10 MB
+	if serverCfg.MaxBodyBytes > 0 {
+		maxBodyBytes = serverCfg.MaxBodyBytes
+	}
 
 	// Service-owned API endpoints.
 	r.GET("/api/health", HealthHandler())
@@ -32,9 +44,9 @@ func NewRouter(
 	proxy.Use(TokenAuthMiddleware(tokenSvc))
 	{
 		proxy.POST("/v1/chat/completions",
-			ProxyHandler(canonical.ProtocolOpenAIChat, selector, executor, usageSvc, logCfg))
+			ProxyHandler(canonical.ProtocolOpenAIChat, selector, executor, usageSvc, logCfg, upstreamTimeout, maxBodyBytes))
 		proxy.POST("/v1/messages",
-			ProxyHandler(canonical.ProtocolAnthropicMessage, selector, executor, usageSvc, logCfg))
+			ProxyHandler(canonical.ProtocolAnthropicMessage, selector, executor, usageSvc, logCfg, upstreamTimeout, maxBodyBytes))
 	}
 
 	// Gateway-owned API endpoints — token self-query.

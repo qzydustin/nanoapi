@@ -81,7 +81,7 @@ func newTestEnv(t *testing.T, upstreamHandler http.HandlerFunc) *testEnv {
 	usageSvc := usage.NewService(usageStore)
 	selector := provider.NewSelector(cfg.Providers)
 	executor := execute.NewExecutor()
-	router := NewRouter(tokenSvc, usageSvc, selector, executor, cfg.Logging)
+	router := NewRouter(tokenSvc, usageSvc, selector, executor, cfg.Logging, cfg.Server)
 
 	return &testEnv{
 		cfg:      cfg,
@@ -337,7 +337,7 @@ func TestProxyForcedStreamAggregation(t *testing.T) {
 
 	env.cfg.Providers[0].ForceStream = true
 	env.selector = provider.NewSelector(env.cfg.Providers)
-	env.router = NewRouter(env.tokenSvc, env.usageSvc, env.selector, env.executor, env.cfg.Logging)
+	env.router = NewRouter(env.tokenSvc, env.usageSvc, env.selector, env.executor, env.cfg.Logging, env.cfg.Server)
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(fixtureString(t, "openai_basic_request.json")))
 	req.Header.Set("Authorization", "Bearer "+env.apiToken)

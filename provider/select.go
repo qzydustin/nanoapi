@@ -21,6 +21,17 @@ func NewSelector(providers []config.ProviderConfig) *Selector {
 // Select picks the highest-priority provider that supports the requested
 // client model, resolves the upstream model, and returns a ProviderSelection.
 func (s *Selector) Select(req *canonical.CanonicalRequest) (*ProviderSelection, error) {
+	selections, err := s.SelectAll(req)
+	if err != nil {
+		return nil, err
+	}
+	return selections[0], nil
+}
+
+// SelectAll returns all matching providers sorted by priority (highest first).
+// This is used for fallback: if the first provider fails, the caller can try
+// the next one.
+func (s *Selector) SelectAll(req *canonical.CanonicalRequest) ([]*ProviderSelection, error) {
 	clientModel := req.ClientModel
 
 	// Collect candidate providers.
@@ -40,15 +51,19 @@ func (s *Selector) Select(req *canonical.CanonicalRequest) (*ProviderSelection, 
 		return candidates[i].Priority > candidates[j].Priority
 	})
 
-	best := candidates[0]
-	target := best.Models[clientModel]
-	upstreamModel := target.Upstream
+	var selections []*ProviderSelection
+	for _, p := range candidates {
+		target := p.Models[clientModel]
+		upstreamModel := target.Upstream
 
-	return &ProviderSelection{
-		Provider:      best,
-		Target:        &target,
-		UpstreamModel: upstreamModel,
-		ForceStream:   best.ForceStream,
-		Override:      ResolveOverride(req, best.Override),
-	}, nil
+		selections = append(selections, &ProviderSelection{
+			Provider:      p,
+			Target:        &target,
+			UpstreamModel: upstreamModel,
+			ForceStream:   p.ForceStream,
+			Override:      ResolveOverride(req, p.Override),
+		})
+	}
+
+	return selections, nil
 }

@@ -11,8 +11,10 @@ type Config struct {
 
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
+	Host           string `yaml:"host"`
+	Port           int    `yaml:"port"`
+	TimeoutSeconds int    `yaml:"timeout_seconds"`
+	MaxBodyBytes   int64  `yaml:"max_body_bytes"`
 }
 
 // LoggingConfig controls runtime logging behavior.

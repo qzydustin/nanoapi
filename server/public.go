@@ -85,6 +85,8 @@ func ProxyHandler(
 	executor *execute.Executor,
 	usageSvc *usage.Service,
 	logCfg config.LoggingConfig,
+	upstreamTimeout time.Duration,
+	maxBodyBytes int64,
 ) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		startTime := time.Now()
@@ -105,6 +107,7 @@ func ProxyHandler(
 		}
 
 		// 1. Read body.
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodyBytes)
 		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {
 			respondError(c, clientProtocol, http.StatusBadRequest, "failed to read request body")
@@ -132,48 +135,17 @@ func ProxyHandler(
 			return
 		}
 
-		// 3. Select provider.
-		selection, err := selector.Select(req)
+		// 3. Select all candidate providers (sorted by priority).
+		selections, err := selector.SelectAll(req)
 		if err != nil {
 			respondError(c, clientProtocol, http.StatusNotFound, err.Error())
 			recordUsage(usageSvc, tc, startTime, clientProtocol, upstreamProtocol, req.ClientModel, upstreamModel, false, usageErrorCode(http.StatusNotFound), nil)
 			return
 		}
 
-		// 4. Apply overrides.
-		provider.ApplyOverride(&req.Params, selection.Override)
+		// Save original params so each attempt starts from a clean state.
+		originalParams := req.Params
 
-		// 5. Determine execution mode.
-		upstreamProtocol = canonical.Protocol(selection.Provider.Protocol)
-		upstreamModel = selection.UpstreamModel
-		mode := execute.DecideMode(req.Stream, selection.ForceStream)
-		upstreamStream := mode == execute.ModePassthroughStream || mode == execute.ModeAggregateStream
-		logAccess(requestID, req, selection.Provider.Name, upstreamProtocol, upstreamModel, mode, reqLog)
-
-		// 6. Encode for upstream.
-		var encodedBody []byte
-		var reasoningCapability *config.ReasoningCapability
-		if selection.Target != nil {
-			reasoningCapability = selection.Target.Reasoning
-		}
-		switch upstreamProtocol {
-		case canonical.ProtocolOpenAIChat:
-			encodedBody, err = codec.EncodeOpenAIRequest(req, selection.UpstreamModel, upstreamStream, reasoningCapability, selection.Provider.Quirks != nil && selection.Provider.Quirks.OpenWebUIWebSearch)
-		case canonical.ProtocolAnthropicMessage:
-			encodedBody, err = codec.EncodeAnthropicRequest(req, selection.UpstreamModel, upstreamStream, reasoningCapability)
-		default:
-			respondError(c, clientProtocol, http.StatusInternalServerError, "unsupported upstream protocol")
-			recordUsage(usageSvc, tc, startTime, clientProtocol, upstreamProtocol, req.ClientModel, upstreamModel, false, usageErrorCode(http.StatusInternalServerError), nil)
-			return
-		}
-		if err != nil {
-			respondError(c, clientProtocol, http.StatusInternalServerError, fmt.Sprintf("encode request: %v", err))
-			recordUsage(usageSvc, tc, startTime, clientProtocol, upstreamProtocol, req.ClientModel, upstreamModel, false, usageErrorCode(http.StatusInternalServerError), nil)
-			return
-		}
-		logReasoning(requestID, req, upstreamProtocol, reasoningCapability)
-
-		// 7. Build execution plan.
 		hasWebSearch := false
 		for _, t := range req.Tools {
 			if t.Type == "web_search" {
@@ -181,94 +153,159 @@ func ProxyHandler(
 				break
 			}
 		}
-		plan := &execute.ExecutionPlan{
-			Mode:             mode,
-			ClientProtocol:   clientProtocol,
-			UpstreamProtocol: upstreamProtocol,
-			URL:              execute.BuildUpstreamURL(selection.Provider.BaseURL, upstreamProtocol),
-			Headers:          execute.BuildHeaders(selection.Provider, upstreamProtocol, upstreamStream),
-			Body:             encodedBody,
-			Stream:           upstreamStream,
-			HasWebSearch:     hasWebSearch,
-		}
-		if reqLog != nil && reqLog.debug {
-			lines := []string{
-				fmt.Sprintf("upstream_protocol: %s", upstreamProtocol),
-				fmt.Sprintf("method: POST"),
-				fmt.Sprintf("url: %s", plan.URL),
-			}
-			lines = append(lines, formatMapLines(plan.Headers)...)
-			lines = append(lines, "body:")
-			lines = append(lines, string(plan.Body))
-			reqLog.WriteSection("upstream_request_full", lines...)
-		}
 
-		// 8. Execute.
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 120*time.Second)
-		defer cancel()
-		result, err := executor.Execute(ctx, plan)
-		if err != nil {
-			statusCode := http.StatusBadGateway
-			if result != nil && result.StatusCode != 0 {
-				statusCode = result.StatusCode
+		// Try each provider in priority order; fall back on 5xx / connection errors.
+		var lastStatusCode int
+		var lastErrMsg string
+
+		for i, selection := range selections {
+			// 4. Reset params and apply this provider's overrides.
+			req.Params = originalParams
+			provider.ApplyOverride(&req.Params, selection.Override)
+
+			// 5. Determine execution mode.
+			upstreamProtocol = canonical.Protocol(selection.Provider.Protocol)
+			upstreamModel = selection.UpstreamModel
+			mode := execute.DecideMode(req.Stream, selection.ForceStream)
+			upstreamStream := mode == execute.ModePassthroughStream || mode == execute.ModeAggregateStream
+			logAccess(requestID, req, selection.Provider.Name, upstreamProtocol, upstreamModel, mode, reqLog)
+
+			// 6. Encode for upstream.
+			var encodedBody []byte
+			var reasoningCapability *config.ReasoningCapability
+			if selection.Target != nil {
+				reasoningCapability = selection.Target.Reasoning
 			}
-			errMsg := err.Error()
-			if result != nil && len(result.Body) > 0 {
-				errMsg = string(result.Body)
+			switch upstreamProtocol {
+			case canonical.ProtocolOpenAIChat:
+				encodedBody, err = codec.EncodeOpenAIRequest(req, selection.UpstreamModel, upstreamStream, reasoningCapability, selection.Provider.Quirks != nil && selection.Provider.Quirks.OpenWebUIWebSearch)
+			case canonical.ProtocolAnthropicMessage:
+				encodedBody, err = codec.EncodeAnthropicRequest(req, selection.UpstreamModel, upstreamStream, reasoningCapability)
+			default:
+				respondError(c, clientProtocol, http.StatusInternalServerError, "unsupported upstream protocol")
+				recordUsage(usageSvc, tc, startTime, clientProtocol, upstreamProtocol, req.ClientModel, upstreamModel, false, usageErrorCode(http.StatusInternalServerError), nil)
+				return
 			}
-			slog.Error(
-				formatLogLine(
-					"error",
-					formatLogKV("req", requestID),
-					formatLogKV("provider", selection.Provider.Name),
-					formatLogKV("upstream", fmt.Sprintf("%s/%s", upstreamProtocol, upstreamModel)),
-					formatLogKV("status", statusCode),
-					formatLogKV("message", truncateForLog(errMsg, 4000)),
-				),
-			)
+			if err != nil {
+				respondError(c, clientProtocol, http.StatusInternalServerError, fmt.Sprintf("encode request: %v", err))
+				recordUsage(usageSvc, tc, startTime, clientProtocol, upstreamProtocol, req.ClientModel, upstreamModel, false, usageErrorCode(http.StatusInternalServerError), nil)
+				return
+			}
+			logReasoning(requestID, req, upstreamProtocol, reasoningCapability)
+
+			// 7. Build execution plan.
+			plan := &execute.ExecutionPlan{
+				Mode:             mode,
+				ClientProtocol:   clientProtocol,
+				UpstreamProtocol: upstreamProtocol,
+				URL:              execute.BuildUpstreamURL(selection.Provider.BaseURL, upstreamProtocol),
+				Headers:          execute.BuildHeaders(selection.Provider, upstreamProtocol, upstreamStream),
+				Body:             encodedBody,
+				Stream:           upstreamStream,
+				HasWebSearch:     hasWebSearch,
+			}
 			if reqLog != nil && reqLog.debug {
-				reqLog.WriteSection(
-					"upstream_response_full",
-					fmt.Sprintf("status: %d", statusCode),
-					"body:",
-					errMsg,
-				)
+				lines := []string{
+					fmt.Sprintf("upstream_protocol: %s", upstreamProtocol),
+					fmt.Sprintf("method: POST"),
+					fmt.Sprintf("url: %s", plan.URL),
+				}
+				lines = append(lines, formatMapLines(plan.Headers)...)
+				lines = append(lines, "body:")
+				lines = append(lines, string(plan.Body))
+				reqLog.WriteSection("upstream_request_full", lines...)
 			}
-			respondError(c, clientProtocol, statusCode, errMsg)
-			recordUsage(usageSvc, tc, startTime, clientProtocol, upstreamProtocol, req.ClientModel, upstreamModel, false, usageErrorCode(statusCode), nil)
+
+			// 8. Execute.
+			ctx, cancel := context.WithTimeout(c.Request.Context(), upstreamTimeout)
+			result, err := executor.Execute(ctx, plan)
+			if err != nil {
+				cancel()
+				statusCode := http.StatusBadGateway
+				if result != nil && result.StatusCode != 0 {
+					statusCode = result.StatusCode
+				}
+				errMsg := err.Error()
+				if result != nil && len(result.Body) > 0 {
+					errMsg = string(result.Body)
+				}
+
+				slog.Error(
+					formatLogLine(
+						"error",
+						formatLogKV("req", requestID),
+						formatLogKV("provider", selection.Provider.Name),
+						formatLogKV("upstream", fmt.Sprintf("%s/%s", upstreamProtocol, upstreamModel)),
+						formatLogKV("status", statusCode),
+						formatLogKV("message", truncateForLog(errMsg, 4000)),
+					),
+				)
+				if reqLog != nil && reqLog.debug {
+					reqLog.WriteSection(
+						"upstream_response_full",
+						fmt.Sprintf("status: %d", statusCode),
+						"body:",
+						errMsg,
+					)
+				}
+
+				lastStatusCode = statusCode
+				lastErrMsg = errMsg
+
+				// Retry on 5xx or connection errors (502 from bad gateway).
+				if statusCode >= 500 && i < len(selections)-1 {
+					slog.Info(formatLogLine(
+						"fallback",
+						formatLogKV("req", requestID),
+						formatLogKV("failed_provider", selection.Provider.Name),
+						formatLogKV("status", statusCode),
+						formatLogKV("next_provider", selections[i+1].Provider.Name),
+					))
+					continue
+				}
+
+				respondError(c, clientProtocol, statusCode, errMsg)
+				recordUsage(usageSvc, tc, startTime, clientProtocol, upstreamProtocol, req.ClientModel, upstreamModel, false, usageErrorCode(statusCode), nil)
+				return
+			}
+			cancel()
+
+			// 9. Route by execution mode.
+			var respUsage *canonical.CanonicalUsage
+
+			switch mode {
+			case execute.ModeDirectNonStream:
+				respUsage = handleDirectNonStream(c, clientProtocol, upstreamProtocol, hasWebSearch, result, reqLog)
+
+			case execute.ModeAggregateStream:
+				respUsage = handleAggregateStream(c, clientProtocol, upstreamProtocol, hasWebSearch, result, reqLog)
+
+			case execute.ModePassthroughStream:
+				respUsage = handlePassthroughStream(c, clientProtocol, upstreamProtocol, hasWebSearch, result, reqLog)
+			}
+
+			// 10. Record usage (non-fatal).
+			status := c.Writer.Status()
+			success := status > 0 && status < 400
+			var errCode *string
+			if !success {
+				errCode = usageErrorCode(status)
+			}
+			slog.Info(formatLogLine(
+				"upstream_result",
+				formatLogKV("req", requestID),
+				formatLogKV("status", status),
+				formatLogKV("latency_ms", time.Since(startTime).Milliseconds()),
+				formatLogKV("success", success),
+				formatLogKV("debug_file", reqLog.DebugPath()),
+			))
+			recordUsage(usageSvc, tc, startTime, clientProtocol, upstreamProtocol, req.ClientModel, upstreamModel, success, errCode, respUsage)
 			return
 		}
 
-		// 9. Route by execution mode.
-		var respUsage *canonical.CanonicalUsage
-
-		switch mode {
-		case execute.ModeDirectNonStream:
-			respUsage = handleDirectNonStream(c, clientProtocol, upstreamProtocol, hasWebSearch, result, reqLog)
-
-		case execute.ModeAggregateStream:
-			respUsage = handleAggregateStream(c, clientProtocol, upstreamProtocol, hasWebSearch, result, reqLog)
-
-		case execute.ModePassthroughStream:
-			respUsage = handlePassthroughStream(c, clientProtocol, upstreamProtocol, hasWebSearch, result, reqLog)
-		}
-
-		// 10. Record usage (non-fatal).
-		status := c.Writer.Status()
-		success := status > 0 && status < 400
-		var errCode *string
-		if !success {
-			errCode = usageErrorCode(status)
-		}
-		slog.Info(formatLogLine(
-			"upstream_result",
-			formatLogKV("req", requestID),
-			formatLogKV("status", status),
-			formatLogKV("latency_ms", time.Since(startTime).Milliseconds()),
-			formatLogKV("success", success),
-			formatLogKV("debug_file", reqLog.DebugPath()),
-		))
-		recordUsage(usageSvc, tc, startTime, clientProtocol, upstreamProtocol, req.ClientModel, upstreamModel, success, errCode, respUsage)
+		// All providers exhausted — respond with the last error.
+		respondError(c, clientProtocol, lastStatusCode, lastErrMsg)
+		recordUsage(usageSvc, tc, startTime, clientProtocol, upstreamProtocol, req.ClientModel, upstreamModel, false, usageErrorCode(lastStatusCode), nil)
 	}
 }
 

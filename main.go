@@ -54,7 +54,7 @@ func main() {
 	executor := execute.NewExecutor()
 
 	// Build router.
-	router := server.NewRouter(tokenSvc, usageSvc, selector, executor, cfg.Logging)
+	router := server.NewRouter(tokenSvc, usageSvc, selector, executor, cfg.Logging, cfg.Server)
 
 	// Start server.
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
