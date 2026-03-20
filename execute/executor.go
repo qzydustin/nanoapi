@@ -3,10 +3,12 @@ package execute
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/qzydustin/nanoapi/canonical"
 	"github.com/qzydustin/nanoapi/codec"
@@ -74,9 +76,18 @@ type Executor struct {
 	client *http.Client
 }
 
-// NewExecutor creates an Executor with a default HTTP client.
+// NewExecutor creates an Executor with an HTTP/1.1 client.
+// HTTP/2 multiplexing is disabled so one upstream failure cannot cancel other in-flight requests.
 func NewExecutor() *Executor {
-	return &Executor{client: &http.Client{}}
+	transport := &http.Transport{
+		TLSClientConfig:       &tls.Config{NextProtos: []string{"http/1.1"}},
+		ForceAttemptHTTP2:     false,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		ResponseHeaderTimeout: 120 * time.Second,
+	}
+	return &Executor{client: &http.Client{Transport: transport}}
 }
 
 // Execute sends the upstream request and returns the result according to the
