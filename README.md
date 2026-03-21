@@ -54,3 +54,36 @@ Key sections:
 ```bash
 go test ./...
 ```
+
+## Scripts
+
+### Usage Report
+
+Query per-token usage across all configured tokens:
+
+```bash
+./scripts/usage.sh <base_url> <config.yaml> [5h|24h|7d|30d]
+```
+
+Examples:
+
+```bash
+./scripts/usage.sh http://localhost:8080 config.yaml        # all time
+./scripts/usage.sh http://localhost:8080 config.yaml 24h    # last 24 hours
+./scripts/usage.sh http://localhost:8080 config.yaml 7d     # last 7 days
+```
+
+Output:
+
+```
+=== LAST 24 HOURS ===
+
+TOKEN              REQS    INPUT   OUTPUT  CACHE_R  CACHE_W   REASON  LAST_USED
+-----              ----    -----   ------  -------  -------   ------  ---------
+claw                 42   1.2M     85.3K   956.1K    12.4K    5.6K   2026-03-21 08:30
+coding               17   430.5K   32.1K   380.2K     8.1K    2.1K   2026-03-21 07:15
+-----              ----    -----   ------  -------  -------   ------
+TOTAL                59   1.6M    117.4K     1.3M    20.5K    7.7K
+```
+
+Requires `curl`, `jq`, and `awk`.
