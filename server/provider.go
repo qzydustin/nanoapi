@@ -90,20 +90,11 @@ func applyOverride(params *codec.Params, override config.OverrideParams) {
 	if len(override.Stop) > 0 {
 		params.Stop = override.Stop
 	}
-
-	if r := override.Reasoning; r != nil {
+	if override.ReasoningEffort != nil {
 		if params.Reasoning == nil {
 			params.Reasoning = &codec.Reasoning{}
 		}
-		if r.Mode != nil {
-			params.Reasoning.Mode = *r.Mode
-		}
-		if r.Effort != nil {
-			params.Reasoning.Effort = r.Effort
-		}
-		if r.BudgetTokens != nil {
-			params.Reasoning.BudgetTokens = r.BudgetTokens
-		}
+		params.Reasoning.Effort = override.ReasoningEffort
 	}
 }
 
@@ -120,19 +111,8 @@ func mergeOverrideParams(dst *config.OverrideParams, src config.OverrideParams) 
 	if len(src.Stop) > 0 {
 		dst.Stop = src.Stop
 	}
-	if src.Reasoning != nil {
-		if dst.Reasoning == nil {
-			dst.Reasoning = &config.ReasoningOverride{}
-		}
-		if src.Reasoning.Mode != nil {
-			dst.Reasoning.Mode = src.Reasoning.Mode
-		}
-		if src.Reasoning.Effort != nil {
-			dst.Reasoning.Effort = src.Reasoning.Effort
-		}
-		if src.Reasoning.BudgetTokens != nil {
-			dst.Reasoning.BudgetTokens = src.Reasoning.BudgetTokens
-		}
+	if src.ReasoningEffort != nil {
+		dst.ReasoningEffort = src.ReasoningEffort
 	}
 }
 

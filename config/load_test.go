@@ -36,9 +36,7 @@ providers:
         upstream: claude-3-7-sonnet-20250219
     override:
       defaults:
-        reasoning:
-          mode: enabled
-          budget_tokens: 4096
+        reasoning_effort: medium
 
   - name: openai-main
     base_url: https://api.openai.com
@@ -101,11 +99,11 @@ func TestLoadConfig(t *testing.T) {
 	if v, ok := p.Models["gpt-4o-mini"]; !ok || v.Upstream != "claude-3-7-sonnet-20250219" {
 		t.Errorf("providers[0].models[gpt-4o-mini].upstream = %q", v.Upstream)
 	}
-	if p.Override.Defaults == nil || p.Override.Defaults.Reasoning == nil {
-		t.Fatal("providers[0].override.defaults.reasoning should not be nil")
+	if p.Override.Defaults == nil || p.Override.Defaults.ReasoningEffort == nil {
+		t.Fatal("providers[0].override.defaults.reasoning_effort should not be nil")
 	}
-	if p.Override.Defaults.Reasoning.BudgetTokens == nil || *p.Override.Defaults.Reasoning.BudgetTokens != 4096 {
-		t.Errorf("providers[0].override.defaults.reasoning.budget_tokens = %v", p.Override.Defaults.Reasoning.BudgetTokens)
+	if *p.Override.Defaults.ReasoningEffort != "medium" {
+		t.Errorf("providers[0].override.defaults.reasoning_effort = %v", *p.Override.Defaults.ReasoningEffort)
 	}
 	openaiProvider := cfg.Providers[1]
 	target, ok := openaiProvider.Models["gpt-4o-mini"]

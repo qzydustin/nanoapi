@@ -10,75 +10,73 @@ import (
 // StreamAggregateState collects stream events into a final
 // non-stream Response. Used for forced-stream aggregation.
 type StreamAggregateState struct {
-	ResponseID       string
-	Model            string
-	TextParts        []string
-	ThinkingParts    []string
-	ToolCalls        []*toolCallState
-	WebSearchResults []codec.WebSearchResult
-	StopReason       string
-	Usage            *codec.Usage
+	responseID       string
+	model            string
+	textParts        []string
+	thinkingParts    []string
+	toolCalls        []*toolCallState
+	webSearchResults []codec.WebSearchResult
+	stopReason       string
+	usage            *codec.Usage
 }
 
 // toolCallState tracks a single tool call being accumulated from streaming.
 type toolCallState struct {
-	ID   string
-	Name string
-	Args strings.Builder
+	id   string
+	name string
+	args strings.Builder
 }
 
 // Apply processes a single stream event into the aggregate state.
 func (s *StreamAggregateState) Apply(event codec.StreamEvent) {
-	if event.ResponseID != "" && s.ResponseID == "" {
-		s.ResponseID = event.ResponseID
+	if event.ResponseID != "" && s.responseID == "" {
+		s.responseID = event.ResponseID
 	}
-	if event.Model != "" && s.Model == "" {
-		s.Model = event.Model
+	if event.Model != "" && s.model == "" {
+		s.model = event.Model
 	}
 
 	switch event.Type {
 	case codec.EventTextDelta:
 		if event.Text != "" {
-			s.TextParts = append(s.TextParts, event.Text)
+			s.textParts = append(s.textParts, event.Text)
 		}
 	case codec.EventThinkingDelta:
-		s.ThinkingParts = append(s.ThinkingParts, event.Text)
+		s.thinkingParts = append(s.thinkingParts, event.Text)
 	case codec.EventToolCallStart:
-		s.ToolCalls = append(s.ToolCalls, &toolCallState{
-			ID:   event.ToolCallID,
-			Name: event.ToolCallName,
+		s.toolCalls = append(s.toolCalls, &toolCallState{
+			id:   event.ToolCallID,
+			name: event.ToolCallName,
 		})
 	case codec.EventToolCallDelta:
-		if len(s.ToolCalls) > 0 {
-			s.ToolCalls[len(s.ToolCalls)-1].Args.WriteString(event.ArgumentsDelta)
+		if len(s.toolCalls) > 0 {
+			s.toolCalls[len(s.toolCalls)-1].args.WriteString(event.ArgumentsDelta)
 		}
 	case codec.EventToolCallEnd:
-		// Nothing to do; the tool call is already accumulated.
 	case codec.EventMessageStop:
-		s.StopReason = event.StopReason
+		s.stopReason = event.StopReason
 	case codec.EventUsageFinal:
 		if event.Usage != nil {
-			if s.Usage == nil {
-				s.Usage = &codec.Usage{}
+			if s.usage == nil {
+				s.usage = &codec.Usage{}
 			}
-			// Merge: later usage events may have partial data.
 			if event.Usage.InputTokens != nil {
-				s.Usage.InputTokens = event.Usage.InputTokens
+				s.usage.InputTokens = event.Usage.InputTokens
 			}
 			if event.Usage.OutputTokens != nil {
-				s.Usage.OutputTokens = event.Usage.OutputTokens
+				s.usage.OutputTokens = event.Usage.OutputTokens
 			}
 			if event.Usage.TotalTokens != nil {
-				s.Usage.TotalTokens = event.Usage.TotalTokens
+				s.usage.TotalTokens = event.Usage.TotalTokens
 			}
 			if event.Usage.ReasoningTokens != nil {
-				s.Usage.ReasoningTokens = event.Usage.ReasoningTokens
+				s.usage.ReasoningTokens = event.Usage.ReasoningTokens
 			}
 			if event.Usage.CacheReadTokens != nil {
-				s.Usage.CacheReadTokens = event.Usage.CacheReadTokens
+				s.usage.CacheReadTokens = event.Usage.CacheReadTokens
 			}
 			if event.Usage.CacheWriteTokens != nil {
-				s.Usage.CacheWriteTokens = event.Usage.CacheWriteTokens
+				s.usage.CacheWriteTokens = event.Usage.CacheWriteTokens
 			}
 		}
 	}
@@ -88,48 +86,55 @@ func (s *StreamAggregateState) Apply(event codec.StreamEvent) {
 func (s *StreamAggregateState) Finalize() *codec.Response {
 	var blocks []codec.ContentBlock
 
-	// Thinking output first.
-	if len(s.ThinkingParts) > 0 {
-		text := strings.Join(s.ThinkingParts, "")
+	if len(s.thinkingParts) > 0 {
+		text := strings.Join(s.thinkingParts, "")
 		blocks = append(blocks, codec.ContentBlock{
 			Type:     "thinking",
 			Thinking: &codec.ThinkingBlock{Text: &text},
 		})
 	}
 
-	// Text output.
-	if len(s.TextParts) > 0 {
-		text := strings.Join(s.TextParts, "")
+	if len(s.textParts) > 0 {
+		text := strings.Join(s.textParts, "")
 		blocks = append(blocks, codec.ContentBlock{
 			Type: "text",
 			Text: &text,
 		})
 	}
 
-	// Tool calls.
-	for _, tc := range s.ToolCalls {
+	for _, tc := range s.toolCalls {
 		var args any
-		argsStr := tc.Args.String()
+		argsStr := tc.args.String()
 		if argsStr != "" {
 			_ = json.Unmarshal([]byte(argsStr), &args)
 		}
 		blocks = append(blocks, codec.ContentBlock{
 			Type: "tool_call",
 			ToolCall: &codec.ToolCall{
-				ID:        tc.ID,
-				Name:      tc.Name,
+				ID:        tc.id,
+				Name:      tc.name,
 				Arguments: args,
 			},
 		})
 	}
 
 	return &codec.Response{
-		ID:         s.ResponseID,
-		Model:      s.Model,
-		StopReason: s.StopReason,
-		Usage:      s.Usage,
+		ID:         s.responseID,
+		Model:      s.model,
+		StopReason: s.stopReason,
+		Usage:      s.usage,
 		Output: []codec.Message{
 			{Role: "assistant", Content: blocks},
 		},
 	}
+}
+
+// WebSearchResults returns the accumulated web search results.
+func (s *StreamAggregateState) WebSearchResults() []codec.WebSearchResult {
+	return s.webSearchResults
+}
+
+// SetWebSearchResults stores web search results parsed from OpenWebUI sources events.
+func (s *StreamAggregateState) SetWebSearchResults(results []codec.WebSearchResult) {
+	s.webSearchResults = results
 }

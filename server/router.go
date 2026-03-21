@@ -7,14 +7,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/qzydustin/nanoapi/config"
 	"github.com/qzydustin/nanoapi/execute"
-	"github.com/qzydustin/nanoapi/token"
-	"github.com/qzydustin/nanoapi/usage"
 )
 
 // NewRouter creates the Gin engine with all routes configured.
 func NewRouter(
-	tokenSvc *token.Service,
-	usageSvc *usage.Service,
+	tokenSvc *TokenService,
+	usageSvc *UsageService,
 	selector *Selector,
 	executor *execute.Executor,
 	logCfg config.LoggingConfig,
@@ -35,7 +33,9 @@ func NewRouter(
 	}
 
 	// Service-owned API endpoints.
-	r.GET("/api/health", HealthHandler())
+	r.GET("/api/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
 
 	// Public proxy routes — token auth.
 	proxy := r.Group("")
@@ -55,11 +55,4 @@ func NewRouter(
 	}
 
 	return r
-}
-
-// HealthHandler returns a simple health check endpoint.
-func HealthHandler() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	}
 }

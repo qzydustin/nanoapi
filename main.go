@@ -14,8 +14,6 @@ import (
 	"github.com/qzydustin/nanoapi/config"
 	"github.com/qzydustin/nanoapi/execute"
 	"github.com/qzydustin/nanoapi/server"
-	"github.com/qzydustin/nanoapi/token"
-	"github.com/qzydustin/nanoapi/usage"
 )
 
 func main() {
@@ -34,12 +32,12 @@ func main() {
 	}
 
 	// Initialize services.
-	usageSvc, err := usage.NewService(cfg.Storage)
+	usageSvc, err := server.NewUsageService(cfg.Storage)
 	if err != nil {
 		log.Fatalf("failed to initialize usage service: %v", err)
 	}
 
-	tokenSvc := token.NewService(cfg.Tokens)
+	tokenSvc := server.NewTokenService(cfg.Tokens)
 	selector := server.NewSelector(cfg.Providers)
 	executor := execute.NewExecutor()
 

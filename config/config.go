@@ -1,5 +1,34 @@
 package config
 
+import (
+	"fmt"
+	"os"
+
+	"gopkg.in/yaml.v3"
+)
+
+// LoadConfig reads and parses a YAML configuration file.
+// Environment variable references like ${VAR} in string values are expanded.
+func LoadConfig(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read config file: %w", err)
+	}
+
+	// Expand environment variables in the raw YAML text.
+	expanded := os.ExpandEnv(string(data))
+
+	var cfg Config
+	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
+		return nil, fmt.Errorf("parse config file: %w", err)
+	}
+	if cfg.Logging.RequestDir == "" {
+		cfg.Logging.RequestDir = "logs/requests"
+	}
+
+	return &cfg, nil
+}
+
 // Config is the top-level runtime configuration for nanoapi.
 type Config struct {
 	Server    ServerConfig     `yaml:"server"`
@@ -46,43 +75,27 @@ type ProviderConfig struct {
 
 	Models   map[string]ModelTargetConfig `yaml:"models"`
 	Override ProviderOverride             `yaml:"override"`
-	Quirks   *ProviderQuirks              `yaml:"quirks,omitempty"`
 }
 
-// ProviderQuirks holds non-standard behavior flags for specific backends.
-type ProviderQuirks struct {
-	OpenWebUIWebSearch bool `yaml:"openwebui_websearch"`
-}
-
-// ModelTargetConfig describes how one client-facing model maps to a specific
-// upstream model and what reasoning features that upstream target supports.
-//
-// Example:
-//
-//	models:
-//	  claude-opus-4-6:
-//	    upstream: bedrock-claude-4-6-opus
-//	    reasoning:
-//	      allowed_efforts: [low, medium, high]
+// ModelTargetConfig describes how one client-facing model maps to an upstream model.
 type ModelTargetConfig struct {
 	Upstream  string               `yaml:"upstream"`
 	Reasoning *ReasoningCapability `yaml:"reasoning,omitempty"`
 }
 
-// ReasoningCapability declares protocol-facing reasoning support for one
-// upstream target model. Values here are target-model capabilities, not user intent.
+// ReasoningCapability declares reasoning support for an upstream model.
 type ReasoningCapability struct {
-	AllowedEfforts []string `yaml:"allowed_efforts"`
+	AllowedEfforts []string          `yaml:"allowed_efforts"`
+	EffortMap      map[string]string `yaml:"effort_map,omitempty"`
 }
 
-// OverrideParams holds typed request parameter overrides.
-// These change request parameters only, never model selection.
+// OverrideParams holds request parameter overrides.
 type OverrideParams struct {
-	MaxTokens   *int               `yaml:"max_tokens"`
-	Temperature *float64           `yaml:"temperature"`
-	TopP        *float64           `yaml:"top_p"`
-	Stop        []string           `yaml:"stop"`
-	Reasoning   *ReasoningOverride `yaml:"reasoning"`
+	MaxTokens       *int     `yaml:"max_tokens"`
+	Temperature     *float64 `yaml:"temperature"`
+	TopP            *float64 `yaml:"top_p"`
+	Stop            []string `yaml:"stop"`
+	ReasoningEffort *string  `yaml:"reasoning_effort"`
 }
 
 // OverrideTarget declares which requests a rule applies to.
@@ -98,15 +111,7 @@ type OverrideRule struct {
 }
 
 // ProviderOverride holds provider-level parameter overrides.
-// Only parameters — never model selection.
 type ProviderOverride struct {
 	Defaults *OverrideParams `yaml:"defaults"`
 	Rules    []OverrideRule  `yaml:"rules"`
-}
-
-// ReasoningOverride holds provider-level thinking/reasoning overrides.
-type ReasoningOverride struct {
-	Mode         *string `yaml:"mode"`
-	Effort       *string `yaml:"effort"`
-	BudgetTokens *int    `yaml:"budget_tokens"`
 }

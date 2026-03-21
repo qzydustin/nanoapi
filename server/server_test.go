@@ -12,14 +12,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/qzydustin/nanoapi/config"
 	"github.com/qzydustin/nanoapi/execute"
-	"github.com/qzydustin/nanoapi/token"
-	"github.com/qzydustin/nanoapi/usage"
 )
 
 type testEnv struct {
 	cfg      *config.Config
-	tokenSvc *token.Service
-	usageSvc *usage.Service
+	tokenSvc *TokenService
+	usageSvc *UsageService
 	selector *Selector
 	executor *execute.Executor
 	router   http.Handler
@@ -63,12 +61,12 @@ func newTestEnv(t *testing.T, upstreamHandler http.HandlerFunc) *testEnv {
 		},
 	}
 
-	usageSvc, err := usage.NewService(cfg.Storage)
+	usageSvc, err := NewUsageService(cfg.Storage)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	tokenSvc := token.NewService(cfg.Tokens)
+	tokenSvc := NewTokenService(cfg.Tokens)
 	selector := NewSelector(cfg.Providers)
 	executor := execute.NewExecutor()
 	router := NewRouter(tokenSvc, usageSvc, selector, executor, cfg.Logging, cfg.Server)
@@ -85,7 +83,7 @@ func newTestEnv(t *testing.T, upstreamHandler http.HandlerFunc) *testEnv {
 	}
 }
 
-func requireUsageRecords(t *testing.T, env *testEnv, want int) []usage.UsageRecord {
+func requireUsageRecords(t *testing.T, env *testEnv, want int) []UsageRecord {
 	t.Helper()
 
 	records, err := env.usageSvc.QueryUsage(env.tokenID, time.Time{}, time.Time{})
@@ -202,12 +200,10 @@ func TestAPIUsageAndLogs(t *testing.T) {
 
 	usageSvc := env.usageSvc
 	now := time.Now()
-	usageSvc.RecordUsage(&usage.UsageRecord{
+	usageSvc.RecordUsage(&UsageRecord{
 		ID:                       uuid.New().String(),
 		TokenID:                  env.tokenID,
 		Timestamp:                now,
-		ClientProtocol:           "openai_chat",
-		UpstreamProtocol:         "anthropic_messages",
 		ClientModel:              "gpt-4o",
 		UpstreamModel:            "claude-3-7-sonnet",
 		InputTokens:              10,
@@ -260,8 +256,8 @@ func TestAPIUsageAndLogs(t *testing.T) {
 		t.Fatalf("logs status = %d, body = %s", w.Code, w.Body.String())
 	}
 	var logsResp struct {
-		TokenID string              `json:"token_id"`
-		Records []usage.UsageRecord `json:"records"`
+		TokenID string        `json:"token_id"`
+		Records []UsageRecord `json:"records"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &logsResp); err != nil {
 		t.Fatalf("decode logs response: %v", err)
@@ -283,7 +279,7 @@ func TestAPIUsageAndLogs(t *testing.T) {
 func TestAPIUsageIsScopedToCurrentToken(t *testing.T) {
 	env := newTestEnv(t, func(w http.ResponseWriter, r *http.Request) {})
 
-	env.usageSvc.RecordUsage(&usage.UsageRecord{
+	env.usageSvc.RecordUsage(&UsageRecord{
 		ID:          uuid.New().String(),
 		TokenID:     "other-token",
 		Timestamp:   time.Now(),
@@ -300,7 +296,7 @@ func TestAPIUsageIsScopedToCurrentToken(t *testing.T) {
 		t.Fatalf("logs status = %d", w.Code)
 	}
 	var resp struct {
-		Records []usage.UsageRecord `json:"records"`
+		Records []UsageRecord `json:"records"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode logs response: %v", err)

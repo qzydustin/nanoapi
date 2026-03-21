@@ -8,8 +8,7 @@ import (
 func intPtr(i int) *int { return &i }
 
 func validConfig() *Config {
-	mode := "enabled"
-	budget := 4096
+	effort := "medium"
 	return &Config{
 		Server: ServerConfig{
 			Host: "0.0.0.0",
@@ -41,10 +40,7 @@ func validConfig() *Config {
 				Models:   map[string]ModelTargetConfig{"gpt-4o": {Upstream: "claude-3-7-sonnet-20250219"}},
 				Override: ProviderOverride{
 					Defaults: &OverrideParams{
-						Reasoning: &ReasoningOverride{
-							Mode:         &mode,
-							BudgetTokens: &budget,
-						},
+						ReasoningEffort: &effort,
 					},
 				},
 			},
@@ -185,26 +181,6 @@ func TestValidate_PriorityAmbiguity(t *testing.T) {
 	}
 }
 
-func TestValidate_ReasoningContradiction(t *testing.T) {
-	cfg := validConfig()
-	disabled := "disabled"
-	budget := 4096
-	cfg.Providers[0].Override.Defaults = &OverrideParams{
-		Reasoning: &ReasoningOverride{
-			Mode:         &disabled,
-			BudgetTokens: &budget,
-		},
-	}
-
-	err := Validate(cfg)
-	if err == nil {
-		t.Fatal("expected reasoning contradiction error")
-	}
-	if !strings.Contains(err.Error(), "disabled") {
-		t.Errorf("error %q should mention disabled", err)
-	}
-}
-
 func TestValidate_OverrideRuleEmptyTarget(t *testing.T) {
 	cfg := validConfig()
 	cfg.Providers[0].Override.Rules = []OverrideRule{
@@ -239,31 +215,5 @@ func TestValidate_OverrideRuleEmptyClientModel(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "target.client_model") {
 		t.Errorf("error %q should mention target.client_model", err)
-	}
-}
-
-func TestValidate_OverrideRuleReasoningContradiction(t *testing.T) {
-	cfg := validConfig()
-	model := "gpt-4o"
-	disabled := "disabled"
-	budget := 1024
-	cfg.Providers[0].Override.Rules = []OverrideRule{
-		{
-			Target: OverrideTarget{ClientModel: &model},
-			Params: OverrideParams{
-				Reasoning: &ReasoningOverride{
-					Mode:         &disabled,
-					BudgetTokens: &budget,
-				},
-			},
-		},
-	}
-
-	err := Validate(cfg)
-	if err == nil {
-		t.Fatal("expected reasoning contradiction error")
-	}
-	if !strings.Contains(err.Error(), "disabled") {
-		t.Errorf("error %q should mention disabled", err)
 	}
 }

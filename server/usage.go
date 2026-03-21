@@ -1,4 +1,4 @@
-package usage
+package server
 
 import (
 	"fmt"
@@ -11,13 +11,13 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-// Service provides usage recording and querying.
-type Service struct {
+// UsageService provides usage recording and querying.
+type UsageService struct {
 	db *gorm.DB
 }
 
-// NewService initializes the database and creates a new usage Service.
-func NewService(cfg config.StorageConfig) (*Service, error) {
+// NewUsageService initializes the database and creates a new UsageService.
+func NewUsageService(cfg config.StorageConfig) (*UsageService, error) {
 	db, err := gorm.Open(sqlite.Open(cfg.DSN), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
@@ -33,19 +33,19 @@ func NewService(cfg config.StorageConfig) (*Service, error) {
 		return nil, fmt.Errorf("migrate usage: %w", err)
 	}
 
-	return &Service{db: db}, nil
+	return &UsageService{db: db}, nil
 }
 
 // RecordUsage persists a usage record. Write failures are logged but not
 // propagated — they must not fail an otherwise successful model request.
-func (s *Service) RecordUsage(rec *UsageRecord) {
+func (s *UsageService) RecordUsage(rec *UsageRecord) {
 	if err := s.db.Create(rec).Error; err != nil {
 		slog.Error("failed to record usage", "error", err, "token_id", rec.TokenID)
 	}
 }
 
 // QueryUsage returns usage records for a token within an optional time range.
-func (s *Service) QueryUsage(tokenID string, from, to time.Time) ([]UsageRecord, error) {
+func (s *UsageService) QueryUsage(tokenID string, from, to time.Time) ([]UsageRecord, error) {
 	var records []UsageRecord
 	q := s.db.Where("token_id = ?", tokenID)
 	if !from.IsZero() {
@@ -61,7 +61,7 @@ func (s *Service) QueryUsage(tokenID string, from, to time.Time) ([]UsageRecord,
 }
 
 // SummaryUsage returns an aggregated usage summary.
-func (s *Service) SummaryUsage(tokenID string, from, to time.Time) (*UsageSummary, error) {
+func (s *UsageService) SummaryUsage(tokenID string, from, to time.Time) (*UsageSummary, error) {
 	var summary UsageSummary
 	q := s.db.Model(&UsageRecord{}).Where("token_id = ?", tokenID)
 	if !from.IsZero() {

@@ -6,108 +6,31 @@ import (
 	"github.com/qzydustin/nanoapi/config"
 )
 
-func normalizeEffortValue(effort string) string {
-	return strings.ToLower(strings.TrimSpace(effort))
-}
-
-func allowedEffortsMap(capability *config.ReasoningCapability) map[string]struct{} {
-	if capability == nil {
-		return nil
-	}
-	out := make(map[string]struct{}, len(capability.AllowedEfforts))
-	for _, effort := range capability.AllowedEfforts {
-		normalized := normalizeEffortValue(effort)
-		if normalized != "" {
-			out[normalized] = struct{}{}
-		}
-	}
-	return out
-}
-
-func supportsEffort(allowed map[string]struct{}, effort string) bool {
-	if allowed == nil {
-		return false
-	}
-	_, ok := allowed[normalizeEffortValue(effort)]
-	return ok
-}
-
-func mapOpenAIEffort(effort string, capability *config.ReasoningCapability) (string, bool) {
-	effort = normalizeEffortValue(effort)
-	if effort == "" {
+// BuildOpenAIReasoning resolves the effective OpenAI reasoning_effort from
+// Anthropic thinking parameters and the upstream model's capabilities.
+// Returns ("", false) when the field should be omitted (e.g. disabled mode),
+// which tells the upstream to run without thinking.
+func BuildOpenAIReasoning(r *Reasoning, capability *config.ReasoningCapability) (string, bool) {
+	// nil / no capability / disabled / no effort → omit reasoning_effort.
+	if r == nil || r.Mode == "disabled" || r.Effort == nil ||
+		capability == nil || len(capability.AllowedEfforts) == 0 {
 		return "", false
 	}
 
-	allowed := allowedEffortsMap(capability)
-	if len(allowed) == 0 {
-		switch effort {
-		case "minimal":
-			return "low", true
-		case "max", "xhigh":
-			return "high", true
-		default:
+	effort := strings.ToLower(strings.TrimSpace(*r.Effort))
+
+	// Apply effort_map if configured (e.g. "max" → "high").
+	if mapped, ok := capability.EffortMap[effort]; ok {
+		effort = mapped
+	}
+
+	// Check against allowed list.
+	for _, a := range capability.AllowedEfforts {
+		if strings.EqualFold(a, effort) {
 			return effort, true
 		}
 	}
 
-	if supportsEffort(allowed, effort) {
-		return effort, true
-	}
-	switch effort {
-	case "minimal":
-		if supportsEffort(allowed, "low") {
-			return "low", true
-		}
-	case "auto":
-		if supportsEffort(allowed, "medium") {
-			return "medium", true
-		}
-	case "max", "xhigh":
-		if supportsEffort(allowed, "high") {
-			return "high", true
-		}
-	}
-	return "", false
-}
-
-func mapOpenAIBudgetToEffort(budget int, capability *config.ReasoningCapability) (string, bool) {
-	switch {
-	case budget <= 0:
-		return "", false
-	case budget <= 1024:
-		return mapOpenAIEffort("low", capability)
-	case budget <= 8192:
-		return mapOpenAIEffort("medium", capability)
-	default:
-		return mapOpenAIEffort("high", capability)
-	}
-}
-
-func mapOpenAIDisabledEffort(capability *config.ReasoningCapability) (string, bool) {
-	for _, candidate := range []string{"none", "minimal", "low"} {
-		if effort, ok := mapOpenAIEffort(candidate, capability); ok {
-			return effort, true
-		}
-	}
-	return "", false
-}
-
-// DebugOpenAIReasoning returns the effective OpenAI effort for logging.
-func DebugOpenAIReasoning(r *Reasoning, capability *config.ReasoningCapability) (string, bool) {
-	if r == nil {
-		return "", false
-	}
-	if r.Mode == "disabled" {
-		return mapOpenAIDisabledEffort(capability)
-	}
-	if r.Effort != nil {
-		return mapOpenAIEffort(*r.Effort, capability)
-	}
-	if r.BudgetTokens != nil {
-		return mapOpenAIBudgetToEffort(*r.BudgetTokens, capability)
-	}
-	if r.Mode != "" {
-		return mapOpenAIEffort("auto", capability)
-	}
-	return "", false
+	// Fallback to medium if the effort is not in the allowed list.
+	return "medium", true
 }

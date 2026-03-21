@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/qzydustin/nanoapi/usage"
 )
 
 func parseTimeRange(c *gin.Context) (time.Time, time.Time) {
@@ -24,7 +23,7 @@ func parseTimeRange(c *gin.Context) (time.Time, time.Time) {
 }
 
 // UsageSummaryHandler handles GET /api/usage for the calling token.
-func UsageSummaryHandler(usageSvc *usage.Service) gin.HandlerFunc {
+func UsageSummaryHandler(usageSvc *UsageService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tc := getTokenContext(c)
 		if tc == nil {
@@ -47,7 +46,7 @@ func UsageSummaryHandler(usageSvc *usage.Service) gin.HandlerFunc {
 }
 
 // UsageLogsHandler handles GET /api/logs for the calling token.
-func UsageLogsHandler(usageSvc *usage.Service) gin.HandlerFunc {
+func UsageLogsHandler(usageSvc *UsageService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tc := getTokenContext(c)
 		if tc == nil {

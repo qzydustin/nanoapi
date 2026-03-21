@@ -8,8 +8,7 @@ const (
 	EventToolCallStart     = "tool_call_start"
 	EventToolCallDelta     = "tool_call_delta"
 	EventToolCallEnd       = "tool_call_end"
-	EventServerToolUse     = "server_tool_use"
-	EventWebSearchResult   = "web_search_tool_result"
+	EventWebSearch         = "web_search"
 	EventMessageStop       = "message_stop"
 	EventUsageFinal        = "usage_final"
 )
@@ -56,12 +55,10 @@ func (p Params) Clone() Params {
 
 // Reasoning represents the request-side reasoning / thinking config.
 type Reasoning struct {
-	Mode         string  // "disabled", "enabled", "adaptive"
-	Effort       *string // "low", "medium", "high"
-	BudgetTokens *int
+	Mode   string  // "disabled", "enabled", "adaptive"
+	Effort *string // "low", "medium", "high", "max"
 }
 
-// Message is one turn in the conversation.
 type Message struct {
 	Role    string // "system", "user", "assistant", "tool"
 	Content []ContentBlock
@@ -69,24 +66,22 @@ type Message struct {
 
 // ContentBlock is a single typed piece of content inside a message.
 type ContentBlock struct {
-	Type string // "text", "image", "tool_call", "tool_result", "thinking"
+	Type string // "text", "image", "tool_call", "tool_result", "thinking", "web_search"
 
-	Text                *string
-	Image               *Image
-	ToolCall            *ToolCall
-	ToolResult          *ToolResult
-	Thinking            *ThinkingBlock
-	ServerToolUse       *ServerToolUse
-	WebSearchToolResult *WebSearchToolResult
+	Text       *string
+	Image      *Image
+	ToolCall   *ToolCall
+	ToolResult *ToolResult
+	Thinking   *ThinkingBlock
+
+	// web_search: synthetic server_tool_use + web_search_tool_result pair
+	WebSearchToolUseID string
+	WebSearchResults   []WebSearchResult
 }
 
-// Image stores image data in a protocol-neutral way.
 type Image struct {
-	SourceType string  // "data_url", "base64", "url"
-	URL        *string // used when SourceType is "url" or "data_url"
-	MediaType  *string // e.g. "image/png"
-	Data       *string // raw base64 data
-	Detail     string  // "low", "high", "auto"; empty means unset
+	MediaType string // e.g. "image/png"
+	Data      string // raw base64 data
 }
 
 // Tool describes a tool definition available for the model.
@@ -95,44 +90,27 @@ type Tool struct {
 	Name        string
 	Description string
 	InputSchema any
-	MaxUses     *int
 }
 
-// ToolChoice is the provider-neutral representation of how tools may be used.
+// ToolChoice describes how tools may be used.
 type ToolChoice struct {
 	Type string // "auto", "required", "tool"
 	Name string // required when Type == "tool"
 }
 
-// ToolCall represents a tool invocation produced by the model.
 type ToolCall struct {
 	ID        string
 	Name      string
 	Arguments any
 }
 
-// ToolResult is the result returned for a prior tool call.
 type ToolResult struct {
 	ToolCallID string
 	Content    []ContentBlock
 	IsError    bool
 }
 
-// ServerToolUse represents Anthropic's synthetic server-side web search usage block.
-type ServerToolUse struct {
-	ID    string
-	Name  string
-	Input any
-}
-
-// WebSearchToolResult represents Anthropic's synthetic web_search_tool_result block.
-type WebSearchToolResult struct {
-	ToolUseID string
-	Content   []WebSearchResult
-}
-
-// ResponseFormat captures structured-output preferences that can be mapped to
-// OpenAI-compatible backends.
+// ResponseFormat captures structured-output preferences.
 type ResponseFormat struct {
 	Type   string // "json_schema", "json_object"
 	Name   string
@@ -140,8 +118,8 @@ type ResponseFormat struct {
 	Strict *bool
 }
 
-// ThinkingBlock holds reasoning / chain-of-thought text produced by
-// a model.  This must never be merged into visible answer text.
+// ThinkingBlock holds reasoning / chain-of-thought text.
+// Must never be merged into visible answer text.
 type ThinkingBlock struct {
 	Text      *string
 	Signature *string
@@ -186,9 +164,9 @@ type StreamEvent struct {
 	// tool_call_delta
 	ArgumentsDelta string
 
-	// synthetic response-side blocks (for example web search)
-	ServerToolUse       *ServerToolUse
-	WebSearchToolResult *WebSearchToolResult
+	// web_search: synthetic pair of server_tool_use + web_search_tool_result
+	WebSearchToolUseID string
+	WebSearchResults   []WebSearchResult
 
 	// message_stop
 	StopReason string

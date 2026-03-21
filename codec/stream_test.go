@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// ---------------------------------------------------------------------------
-// OpenAI Stream Decoding
-// ---------------------------------------------------------------------------
 
 func TestDecodeOpenAIStream_TextDelta(t *testing.T) {
 	line := fixtureString(t, "openai_stream_text_delta.sse")
@@ -160,9 +157,6 @@ func TestDecodeOpenAIStream_KeepAlive(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Anthropic Stream Encoding
-// ---------------------------------------------------------------------------
 
 func TestAnthropicStreamEncoder_TextDelta(t *testing.T) {
 	enc := NewAnthropicStreamEncoder()
@@ -269,11 +263,10 @@ func TestAnthropicStreamEncoder_WebSearchBlocks(t *testing.T) {
 	})
 
 	var out strings.Builder
-	for _, ev := range SynthesizeWebSearchSSE([]WebSearchResult{
+	ev := SynthesizeWebSearchSSE([]WebSearchResult{
 		{URL: "https://example.com", Title: "Example"},
-	}) {
-		out.WriteString(enc.Encode(ev))
-	}
+	})
+	out.WriteString(enc.Encode(ev))
 
 	s := out.String()
 	if !strings.Contains(s, `"type":"server_tool_use"`) {

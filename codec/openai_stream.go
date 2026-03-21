@@ -157,12 +157,3 @@ func DecodeOpenAIStreamLine(line string) ([]StreamEvent, bool, error) {
 
 	return events, false, nil
 }
-
-// ---------------------------------------------------------------------------
-// OpenAI Stream Encoding — removed (no OpenAI client)
-// ---------------------------------------------------------------------------
-
-func mustJSON(v any) string {
-	b, _ := json.Marshal(v)
-	return string(b)
-}

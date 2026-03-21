@@ -5,10 +5,6 @@ import (
 	"fmt"
 )
 
-// ---------------------------------------------------------------------------
-// Anthropic Messages decoding
-// ---------------------------------------------------------------------------
-
 type anthropicRequest struct {
 	Model         string                 `json:"model"`
 	System        json.RawMessage        `json:"system,omitempty"`
@@ -35,26 +31,16 @@ type anthropicMessage struct {
 }
 
 type anthropicContentBlock struct {
-	Type string `json:"type"`
-
-	// text
-	Text string `json:"text,omitempty"`
-
-	// image
-	Source *anthropicImageSource `json:"source,omitempty"`
-
-	// tool_use
-	ID    string `json:"id,omitempty"`
-	Name  string `json:"name,omitempty"`
-	Input any    `json:"input,omitempty"`
-
-	// tool_result
-	ToolUseID     string          `json:"tool_use_id,omitempty"`
-	ResultContent json.RawMessage `json:"content,omitempty"`
-	IsError       bool            `json:"is_error,omitempty"`
-
-	// thinking
-	Thinking string `json:"thinking,omitempty"`
+	Type          string                `json:"type"`
+	Text          string                `json:"text,omitempty"`
+	Source        *anthropicImageSource `json:"source,omitempty"`
+	ID            string                `json:"id,omitempty"`
+	Name          string                `json:"name,omitempty"`
+	Input         any                   `json:"input,omitempty"`
+	ToolUseID     string                `json:"tool_use_id,omitempty"`
+	ResultContent json.RawMessage       `json:"content,omitempty"`
+	IsError       bool                  `json:"is_error,omitempty"`
+	Thinking      string                `json:"thinking,omitempty"`
 }
 
 type anthropicImageSource struct {
@@ -65,11 +51,10 @@ type anthropicImageSource struct {
 }
 
 type anthropicTool struct {
-	Type        string `json:"type,omitempty"` // "web_search_20250305" for built-in tools
+	Type        string `json:"type,omitempty"`
 	Name        string `json:"name,omitempty"`
 	Description string `json:"description,omitempty"`
 	InputSchema any    `json:"input_schema,omitempty"`
-	MaxUses     *int   `json:"max_uses,omitempty"` // for web_search
 }
 
 type anthropicToolChoice struct {
@@ -78,8 +63,7 @@ type anthropicToolChoice struct {
 }
 
 type anthropicThinking struct {
-	Type         string `json:"type"` // "enabled", "disabled", "adaptive"
-	BudgetTokens *int   `json:"budget_tokens,omitempty"`
+	Type string `json:"type"` // "enabled", "disabled", "adaptive"
 }
 
 // DecodeAnthropicRequest decodes a raw JSON request body into a Request.
@@ -108,8 +92,7 @@ func DecodeAnthropicRequest(body []byte) (*Request, error) {
 
 	if raw.Thinking != nil {
 		req.Params.Reasoning = &Reasoning{
-			Mode:         raw.Thinking.Type,
-			BudgetTokens: raw.Thinking.BudgetTokens,
+			Mode: raw.Thinking.Type,
 		}
 	}
 	if raw.OutputConfig != nil && raw.OutputConfig.Effort != nil {
@@ -144,9 +127,6 @@ func DecodeAnthropicRequest(body []byte) (*Request, error) {
 			tool.Type = "web_search"
 		} else if t.Type != "" {
 			tool.Type = t.Type
-		}
-		if t.MaxUses != nil {
-			tool.MaxUses = t.MaxUses
 		}
 		req.Tools = append(req.Tools, tool)
 	}
@@ -229,22 +209,13 @@ func decodeAnthropicContent(raw json.RawMessage) ([]ContentBlock, error) {
 			result = append(result, ContentBlock{Type: "text", Text: strPtr(b.Text)})
 
 		case "image":
-			if b.Source == nil {
+			if b.Source == nil || b.Source.Type != "base64" {
 				continue
 			}
-			img := &Image{}
-			switch b.Source.Type {
-			case "base64":
-				img.SourceType = "base64"
-				img.MediaType = strPtr(b.Source.MediaType)
-				img.Data = strPtr(b.Source.Data)
-			case "url":
-				img.SourceType = "url"
-				img.URL = strPtr(b.Source.URL)
-			default:
-				img.SourceType = b.Source.Type
-			}
-			result = append(result, ContentBlock{Type: "image", Image: img})
+			result = append(result, ContentBlock{Type: "image", Image: &Image{
+				MediaType: b.Source.MediaType,
+				Data:      b.Source.Data,
+			}})
 
 		case "tool_use":
 			result = append(result, ContentBlock{
@@ -298,7 +269,6 @@ func decodeAnthropicToolResultContent(raw json.RawMessage) ([]ContentBlock, erro
 		}
 		return []ContentBlock{{Type: "text", Text: strPtr(s)}}, nil
 	}
-	// Recurse into block array.
 	return decodeAnthropicContent(raw)
 }
 

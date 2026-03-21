@@ -175,9 +175,6 @@ func TestStreamAggregation_Usage(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Decode → Aggregate pipeline: simulated OpenAI stream → aggregated response
-// ---------------------------------------------------------------------------
 
 func TestAggregation_OpenAIStreamPipeline(t *testing.T) {
 	lines := fixtureLines(t, "openai_aggregate_stream.sse")
@@ -215,9 +212,6 @@ func TestAggregation_OpenAIStreamPipeline(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Aggregation with tool calls from OpenAI stream
-// ---------------------------------------------------------------------------
 
 func TestAggregation_OpenAIToolCallStream(t *testing.T) {
 	lines := fixtureLines(t, "openai_tool_call_stream.sse")
@@ -259,9 +253,6 @@ func TestAggregation_OpenAIToolCallStream(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Aggregation: empty stream produces empty response
-// ---------------------------------------------------------------------------
 
 func TestAggregation_EmptyStream(t *testing.T) {
 	state := &StreamAggregateState{}
@@ -271,9 +262,6 @@ func TestAggregation_EmptyStream(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Aggregation: usage merge from multiple events
-// ---------------------------------------------------------------------------
 
 func TestAggregation_UsageMerge(t *testing.T) {
 	state := &StreamAggregateState{}

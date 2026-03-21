@@ -131,23 +131,6 @@ func formatMapLines(values map[string]string) []string {
 	return lines
 }
 
-func formatQueryLines(values map[string][]string) []string {
-	if len(values) == 0 {
-		return nil
-	}
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-
-	lines := make([]string, 0, len(keys))
-	for _, key := range keys {
-		lines = append(lines, fmt.Sprintf("%s: %s", key, strings.Join(values[key], ", ")))
-	}
-	return lines
-}
-
 func redactHeaderValue(value string) string {
 	if value == "" {
 		return ""

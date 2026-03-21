@@ -7,10 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// ---------------------------------------------------------------------------
-// Anthropic Client Response Encoding (Response → Anthropic JSON)
-// ---------------------------------------------------------------------------
-
 type anthropicClientResp struct {
 	ID           string                `json:"id"`
 	Type         string                `json:"type"`
@@ -23,17 +19,11 @@ type anthropicClientResp struct {
 }
 
 type anthropicClientBlock struct {
-	Type string `json:"type"`
-
-	// text
-	Text string `json:"text,omitempty"`
-
-	// tool_use
-	ID    string `json:"id,omitempty"`
-	Name  string `json:"name,omitempty"`
-	Input any    `json:"input,omitempty"`
-
-	// thinking
+	Type      string `json:"type"`
+	Text      string `json:"text,omitempty"`
+	ID        string `json:"id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Input     any    `json:"input,omitempty"`
 	Thinking  string `json:"thinking,omitempty"`
 	Signature string `json:"signature,omitempty"`
 }
@@ -86,33 +76,29 @@ func EncodeAnthropicClientResponse(resp *Response) ([]byte, error) {
 					}
 					out.Content = append(out.Content, block)
 				}
-			case "server_tool_use":
-				if b.ServerToolUse != nil {
-					out.Content = append(out.Content, map[string]any{
-						"type":  "server_tool_use",
-						"id":    b.ServerToolUse.ID,
-						"name":  b.ServerToolUse.Name,
-						"input": b.ServerToolUse.Input,
-					})
-				}
-			case "web_search_tool_result":
-				if b.WebSearchToolResult != nil {
-					content := make([]any, len(b.WebSearchToolResult.Content))
-					for i, r := range b.WebSearchToolResult.Content {
-						content[i] = map[string]any{
-							"type":              "web_search_result",
-							"url":               r.URL,
-							"title":             r.Title,
-							"encrypted_content": "",
-							"page_age":          nil,
-						}
+			case "web_search":
+				toolUseID := b.WebSearchToolUseID
+				out.Content = append(out.Content, map[string]any{
+					"type":  "server_tool_use",
+					"id":    toolUseID,
+					"name":  "web_search",
+					"input": map[string]any{},
+				})
+				content := make([]any, len(b.WebSearchResults))
+				for i, r := range b.WebSearchResults {
+					content[i] = map[string]any{
+						"type":              "web_search_result",
+						"url":               r.URL,
+						"title":             r.Title,
+						"encrypted_content": "",
+						"page_age":          nil,
 					}
-					out.Content = append(out.Content, map[string]any{
-						"type":        "web_search_tool_result",
-						"tool_use_id": b.WebSearchToolResult.ToolUseID,
-						"content":     content,
-					})
 				}
+				out.Content = append(out.Content, map[string]any{
+					"type":        "web_search_tool_result",
+					"tool_use_id": toolUseID,
+					"content":     content,
+				})
 			}
 		}
 	}
@@ -167,9 +153,5 @@ func NormalizeAnthropicStreamEvent(event StreamEvent, clientResponseID, clientMo
 	}
 	return event
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 func strPtr(s string) *string { return &s }

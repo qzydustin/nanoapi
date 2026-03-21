@@ -7,21 +7,17 @@ import (
 	"github.com/qzydustin/nanoapi/config"
 )
 
-func sp(s string) *string   { return &s }
 func ip(i int) *int         { return &i }
 func fp(f float64) *float64 { return &f }
 
-// ---------------------------------------------------------------------------
-// OpenAI Request Encoding
-// ---------------------------------------------------------------------------
 
 func TestEncodeOpenAI_SimpleText(t *testing.T) {
 	req := &Request{
 		ClientModel: "gpt-4o",
-		System:      []ContentBlock{{Type: "text", Text: sp("Be helpful.")}},
+		System:      []ContentBlock{{Type: "text", Text: strPtr("Be helpful.")}},
 		Messages: []Message{
 			{Role: "user", Content: []ContentBlock{
-				{Type: "text", Text: sp("Hello")},
+				{Type: "text", Text: strPtr("Hello")},
 			}},
 		},
 		Params: Params{
@@ -30,7 +26,7 @@ func TestEncodeOpenAI_SimpleText(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -51,20 +47,19 @@ func TestEncodeOpenAI_SimpleText(t *testing.T) {
 	}
 }
 
-func TestEncodeOpenAI_ImageDataURL(t *testing.T) {
+func TestEncodeOpenAI_ImageBase64(t *testing.T) {
 	req := &Request{
 		Messages: []Message{
 			{Role: "user", Content: []ContentBlock{
 				{Type: "image", Image: &Image{
-					SourceType: "data_url",
-					MediaType:  sp("image/png"),
-					Data:       sp("iVBOR"),
+					MediaType: "image/png",
+					Data:      "iVBOR",
 				}},
 			}},
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -93,7 +88,7 @@ func TestEncodeOpenAI_ToolCalls(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -120,7 +115,7 @@ func TestEncodeOpenAI_InfersDummyToolsFromHistory(t *testing.T) {
 			{Role: "tool", Content: []ContentBlock{
 				{Type: "tool_result", ToolResult: &ToolResult{
 					ToolCallID: "call_1",
-					Content:    []ContentBlock{{Type: "text", Text: sp("ok")}},
+					Content:    []ContentBlock{{Type: "text", Text: strPtr("ok")}},
 				}},
 			}},
 			{Role: "assistant", Content: []ContentBlock{
@@ -132,7 +127,7 @@ func TestEncodeOpenAI_InfersDummyToolsFromHistory(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -163,12 +158,12 @@ func TestEncodeOpenAI_NoToolsInferredWithoutHistory(t *testing.T) {
 	req := &Request{
 		Messages: []Message{
 			{Role: "user", Content: []ContentBlock{
-				{Type: "text", Text: sp("Hello")},
+				{Type: "text", Text: strPtr("Hello")},
 			}},
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -195,7 +190,7 @@ func TestEncodeOpenAI_ExplicitToolsNotOverriddenByInference(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -212,9 +207,6 @@ func TestEncodeOpenAI_ExplicitToolsNotOverriddenByInference(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// OpenAI Response Decoding
-// ---------------------------------------------------------------------------
 
 func TestDecodeOpenAIResponse_Text(t *testing.T) {
 	resp, err := DecodeOpenAIResponse(fixtureBytes(t, "openai_response_text.json"))
@@ -319,7 +311,7 @@ func TestCrossProtocol_AnthropicToOpenAI(t *testing.T) {
 	}
 
 	// Encode as OpenAI request
-	openaiBody, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	openaiBody, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode openai: %v", err)
 	}
@@ -346,7 +338,8 @@ func TestCrossProtocol_AnthropicThinkingToOpenAIReasoning(t *testing.T) {
 		t.Fatalf("decode anthropic: %v", err)
 	}
 
-	openaiBody, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	capability := &config.ReasoningCapability{AllowedEfforts: []string{"low", "medium", "high"}}
+	openaiBody, err := EncodeOpenAIRequest(req, "gpt-4o", false, capability)
 	if err != nil {
 		t.Fatalf("encode openai: %v", err)
 	}
@@ -375,7 +368,7 @@ func TestCrossProtocol_AnthropicToolChoiceToOpenAI(t *testing.T) {
 		t.Fatalf("decode anthropic: %v", err)
 	}
 
-	openaiBody, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	openaiBody, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode openai: %v", err)
 	}
@@ -415,7 +408,7 @@ func TestCrossProtocol_AnthropicStructuredOutputToOpenAIResponseFormat(t *testin
 		t.Fatal("response_format should not be nil")
 	}
 
-	openaiBody, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	openaiBody, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode openai: %v", err)
 	}
@@ -466,9 +459,6 @@ func TestDecodeAnthropic_DropsUnknownRequestBlocks(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// OpenAI Request Encoding — tool_result
-// ---------------------------------------------------------------------------
 
 func TestEncodeOpenAI_ToolResult(t *testing.T) {
 	req := &Request{
@@ -476,13 +466,13 @@ func TestEncodeOpenAI_ToolResult(t *testing.T) {
 			{Role: "tool", Content: []ContentBlock{
 				{Type: "tool_result", ToolResult: &ToolResult{
 					ToolCallID: "call_1",
-					Content:    []ContentBlock{{Type: "text", Text: sp("Sunny, 72°F")}},
+					Content:    []ContentBlock{{Type: "text", Text: strPtr("Sunny, 72°F")}},
 				}},
 			}},
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -512,13 +502,13 @@ func TestEncodeOpenAI_ToolResultErrorPrefix(t *testing.T) {
 				{Type: "tool_result", ToolResult: &ToolResult{
 					ToolCallID: "call_1",
 					IsError:    true,
-					Content:    []ContentBlock{{Type: "text", Text: sp("File does not exist")}},
+					Content:    []ContentBlock{{Type: "text", Text: strPtr("File does not exist")}},
 				}},
 			}},
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -541,12 +531,10 @@ func TestEncodeOpenAI_ToolResultPreservesImageContent(t *testing.T) {
 				{Type: "tool_result", ToolResult: &ToolResult{
 					ToolCallID: "call_img",
 					Content: []ContentBlock{
-						{Type: "text", Text: sp("look at this")},
+						{Type: "text", Text: strPtr("look at this")},
 						{Type: "image", Image: &Image{
-							SourceType: "base64",
-							MediaType:  sp("image/png"),
-							Data:       sp("iVBORw0KGgoAAAANSUhEUg=="),
-							Detail:     "high",
+							MediaType: "image/png",
+							Data:      "iVBORw0KGgoAAAANSUhEUg==",
 						}},
 					},
 				}},
@@ -554,7 +542,7 @@ func TestEncodeOpenAI_ToolResultPreservesImageContent(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -575,9 +563,6 @@ func TestEncodeOpenAI_ToolResultPreservesImageContent(t *testing.T) {
 	if imageURL["url"] != "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==" {
 		t.Fatalf("image_url.url = %v", imageURL["url"])
 	}
-	if imageURL["detail"] != "high" {
-		t.Fatalf("image_url.detail = %v", imageURL["detail"])
-	}
 }
 
 func TestEncodeOpenAI_UserToolResultComesBeforeUserText(t *testing.T) {
@@ -586,14 +571,14 @@ func TestEncodeOpenAI_UserToolResultComesBeforeUserText(t *testing.T) {
 			{Role: "user", Content: []ContentBlock{
 				{Type: "tool_result", ToolResult: &ToolResult{
 					ToolCallID: "call_1",
-					Content:    []ContentBlock{{Type: "text", Text: sp("Sunny, 72°F")}},
+					Content:    []ContentBlock{{Type: "text", Text: strPtr("Sunny, 72°F")}},
 				}},
-				{Type: "text", Text: sp("What should I wear?")},
+				{Type: "text", Text: strPtr("What should I wear?")},
 			}},
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -633,7 +618,7 @@ func TestEncodeOpenAI_AssistantToolCallsIncludeEmptyContent(t *testing.T) {
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -654,15 +639,15 @@ func TestEncodeOpenAI_SkipsAssistantThinkingOnlyMessage(t *testing.T) {
 	req := &Request{
 		Messages: []Message{
 			{Role: "assistant", Content: []ContentBlock{
-				{Type: "thinking", Thinking: &ThinkingBlock{Text: sp("internal only")}},
+				{Type: "thinking", Thinking: &ThinkingBlock{Text: strPtr("internal only")}},
 			}},
 			{Role: "user", Content: []ContentBlock{
-				{Type: "text", Text: sp("hello")},
+				{Type: "text", Text: strPtr("hello")},
 			}},
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -680,92 +665,23 @@ func TestEncodeOpenAI_SkipsAssistantThinkingOnlyMessage(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// OpenAI Request Encoding — image base64 → data_url
-// ---------------------------------------------------------------------------
-
-func TestEncodeOpenAI_ImageBase64ToDataURL(t *testing.T) {
-	req := &Request{
-		Messages: []Message{
-			{Role: "user", Content: []ContentBlock{
-				{Type: "image", Image: &Image{
-					SourceType: "base64",
-					MediaType:  sp("image/jpeg"),
-					Data:       sp("/9j/4AAQ"),
-				}},
-			}},
-		},
-	}
-
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	var raw map[string]any
-	json.Unmarshal(body, &raw)
-	msgs := raw["messages"].([]any)
-	msg := msgs[0].(map[string]any)
-	content := msg["content"].([]any)
-	part := content[0].(map[string]any)
-	imgURL := part["image_url"].(map[string]any)["url"].(string)
-	if imgURL != "data:image/jpeg;base64,/9j/4AAQ" {
-		t.Errorf("image_url = %q, want data:image/jpeg;base64,/9j/4AAQ", imgURL)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// OpenAI Request Encoding — image URL passthrough
-// ---------------------------------------------------------------------------
-
-func TestEncodeOpenAI_ImageURL(t *testing.T) {
-	req := &Request{
-		Messages: []Message{
-			{Role: "user", Content: []ContentBlock{
-				{Type: "image", Image: &Image{
-					SourceType: "url",
-					URL:        sp("https://example.com/img.png"),
-				}},
-			}},
-		},
-	}
-
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	var raw map[string]any
-	json.Unmarshal(body, &raw)
-	msgs := raw["messages"].([]any)
-	msg := msgs[0].(map[string]any)
-	content := msg["content"].([]any)
-	part := content[0].(map[string]any)
-	imgURL := part["image_url"].(map[string]any)["url"].(string)
-	if imgURL != "https://example.com/img.png" {
-		t.Errorf("image_url = %q", imgURL)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// OpenAI Request Encoding — reasoning_effort
-// ---------------------------------------------------------------------------
 
 func TestEncodeOpenAI_ReasoningEffort(t *testing.T) {
 	req := &Request{
 		Messages: []Message{
 			{Role: "user", Content: []ContentBlock{
-				{Type: "text", Text: sp("Think hard")},
+				{Type: "text", Text: strPtr("Think hard")},
 			}},
 		},
 		Params: Params{
 			Reasoning: &Reasoning{
-				Effort: sp("high"),
+				Effort: strPtr("high"),
 			},
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	capability := &config.ReasoningCapability{AllowedEfforts: []string{"low", "medium", "high"}}
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, capability)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -781,17 +697,21 @@ func TestEncodeOpenAI_ReasoningEffortMaxMapsToHigh(t *testing.T) {
 	req := &Request{
 		Messages: []Message{
 			{Role: "user", Content: []ContentBlock{
-				{Type: "text", Text: sp("Think harder")},
+				{Type: "text", Text: strPtr("Think harder")},
 			}},
 		},
 		Params: Params{
 			Reasoning: &Reasoning{
-				Effort: sp("max"),
+				Effort: strPtr("max"),
 			},
 		},
 	}
 
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	capability := &config.ReasoningCapability{
+		AllowedEfforts: []string{"low", "medium", "high"},
+		EffortMap:      map[string]string{"max": "high"},
+	}
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, capability)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -803,65 +723,34 @@ func TestEncodeOpenAI_ReasoningEffortMaxMapsToHigh(t *testing.T) {
 	}
 }
 
-func TestEncodeOpenAI_DisabledThinkingOverridesEffortToLowestSupported(t *testing.T) {
+func TestEncodeOpenAI_DisabledThinkingOmitsReasoningEffort(t *testing.T) {
 	req := &Request{
 		Messages: []Message{
 			{Role: "user", Content: []ContentBlock{
-				{Type: "text", Text: sp("Think less")},
+				{Type: "text", Text: strPtr("No thinking")},
 			}},
 		},
 		Params: Params{
 			Reasoning: &Reasoning{
 				Mode:   "disabled",
-				Effort: sp("high"),
+				Effort: strPtr("high"),
 			},
 		},
 	}
 
 	capability := &config.ReasoningCapability{AllowedEfforts: []string{"low", "medium", "high"}}
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, capability, false)
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, capability)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
 
 	var raw map[string]any
 	json.Unmarshal(body, &raw)
-	if raw["reasoning_effort"] != "low" {
-		t.Errorf("reasoning_effort = %v, want low", raw["reasoning_effort"])
+	if _, ok := raw["reasoning_effort"]; ok {
+		t.Errorf("reasoning_effort should be omitted for disabled mode, got %v", raw["reasoning_effort"])
 	}
 }
 
-func TestEncodeOpenAI_DisabledThinkingUsesNoneWhenSupported(t *testing.T) {
-	req := &Request{
-		Messages: []Message{
-			{Role: "user", Content: []ContentBlock{
-				{Type: "text", Text: sp("No thinking")},
-			}},
-		},
-		Params: Params{
-			Reasoning: &Reasoning{
-				Mode:   "disabled",
-				Effort: sp("high"),
-			},
-		},
-	}
-
-	capability := &config.ReasoningCapability{AllowedEfforts: []string{"none", "low", "medium", "high"}}
-	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, capability, false)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	var raw map[string]any
-	json.Unmarshal(body, &raw)
-	if raw["reasoning_effort"] != "none" {
-		t.Errorf("reasoning_effort = %v, want none", raw["reasoning_effort"])
-	}
-}
-
-// ---------------------------------------------------------------------------
-// OpenAI Response Decoding — reasoning_content
-// ---------------------------------------------------------------------------
 
 func TestDecodeOpenAIResponse_ReasoningContent(t *testing.T) {
 	resp, err := DecodeOpenAIResponse(fixtureBytes(t, "openai_response_reasoning_content.json"))
@@ -937,9 +826,6 @@ func TestDecodeOpenAIResponse_ThinkingBlocks(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Anthropic Client Response Encoding — thinking + tool_use
-// ---------------------------------------------------------------------------
 
 func TestEncodeAnthropicClientResponse_ThinkingAndToolUse(t *testing.T) {
 	in64 := int64(10)
@@ -950,7 +836,7 @@ func TestEncodeAnthropicClientResponse_ThinkingAndToolUse(t *testing.T) {
 		ID: "msg_123", Model: "claude-3-7-sonnet-20250219", StopReason: "tool_use",
 		Output: []Message{
 			{Role: "assistant", Content: []ContentBlock{
-				{Type: "thinking", Thinking: &ThinkingBlock{Text: sp("Let me think..."), Signature: sp("sig_123")}},
+				{Type: "thinking", Thinking: &ThinkingBlock{Text: strPtr("Let me think..."), Signature: strPtr("sig_123")}},
 				{Type: "tool_call", ToolCall: &ToolCall{
 					ID: "toolu_1", Name: "get_weather",
 					Arguments: map[string]any{"location": "NYC"},

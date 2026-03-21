@@ -38,43 +38,35 @@ providers:
   - name: openwebui-primary
     base_url: https://chat.example.com/api
     api_key: your-openwebui-jwt-token
-    # Higher priority wins when multiple providers support the same client model.
     priority: 100
-    # If true, non-stream client requests may still use upstream streaming internally.
     force_stream: true
-    quirks:
-      # Send web search as OpenWebUI features flag instead of tools.
-      openwebui_websearch: true
     models:
       # client model name -> upstream model config
       claude-opus-4-6:
         upstream: bedrock-claude-4-6-opus
         reasoning:
-          allowed_efforts:
-            - low
-            - medium
-            - high
+          allowed_efforts: [low, medium, high]
+          # Map client effort values to upstream values (e.g. Claude Code sends "max").
+          effort_map:
+            max: high
       claude-haiku-4-5-20251001:
         upstream: bedrock-claude-4-5-haiku
         reasoning:
-          allowed_efforts:
-            - low
-            - medium
-            - high
+          allowed_efforts: [low, medium, high]
+          effort_map:
+            max: high
     override:
       defaults:
         # Provider-level parameter overrides applied after provider selection.
         max_tokens: 4096
-        reasoning:
-          effort: medium
+        reasoning_effort: medium
       rules:
         # Rules are evaluated top-to-bottom.
         # If multiple rules match, later ones override earlier ones.
         - target:
             client_model: claude-opus-4-6
           params:
-            reasoning:
-              effort: high
+            reasoning_effort: high
 
   # Fallback provider example (lower priority).
   # - name: openwebui-fallback
@@ -82,8 +74,10 @@ providers:
   #   api_key: your-backup-jwt-token
   #   priority: 50
   #   force_stream: true
-  #   quirks:
-  #     openwebui_websearch: true
   #   models:
   #     claude-opus-4-6:
   #       upstream: bedrock-claude-4-6-opus
+  #       reasoning:
+  #         allowed_efforts: [low, medium, high]
+  #         effort_map:
+  #           max: high

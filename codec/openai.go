@@ -8,27 +8,23 @@ import (
 )
 
 type openAIOutRequest struct {
-	Model           string             `json:"model"`
-	Messages        []openAIOutMsg     `json:"messages"`
-	Stream          bool               `json:"stream,omitempty"`
-	MaxTokens       *int               `json:"max_completion_tokens,omitempty"`
-	Temperature     *float64           `json:"temperature,omitempty"`
-	TopP            *float64           `json:"top_p,omitempty"`
-	Stop            []string           `json:"stop,omitempty"`
-	Tools           *[]openAIOutTool   `json:"tools,omitempty"`
-	ToolChoice      any                `json:"tool_choice,omitempty"`
-	ResponseFormat  any                `json:"response_format,omitempty"`
-	ReasoningEffort *string            `json:"reasoning_effort,omitempty"`
-	StreamOptions   *streamOptions     `json:"stream_options,omitempty"`
-	Features        *openAIOutFeatures `json:"features,omitempty"`
+	Model           string           `json:"model"`
+	Messages        []openAIOutMsg   `json:"messages"`
+	Stream          bool             `json:"stream,omitempty"`
+	MaxTokens       *int             `json:"max_completion_tokens,omitempty"`
+	Temperature     *float64         `json:"temperature,omitempty"`
+	TopP            *float64         `json:"top_p,omitempty"`
+	Stop            []string         `json:"stop,omitempty"`
+	Tools           *[]openAIOutTool `json:"tools,omitempty"`
+	ToolChoice      any              `json:"tool_choice,omitempty"`
+	ResponseFormat  any              `json:"response_format,omitempty"`
+	ReasoningEffort *string          `json:"reasoning_effort,omitempty"`
+	StreamOptions   *streamOptions   `json:"stream_options,omitempty"`
+	Features        map[string]bool  `json:"features,omitempty"`
 }
 
 type streamOptions struct {
 	IncludeUsage bool `json:"include_usage"`
-}
-
-type openAIOutFeatures struct {
-	WebSearch bool `json:"web_search,omitempty"`
 }
 
 type openAIOutMsg struct {
@@ -45,8 +41,7 @@ type openAIOutContentPart struct {
 }
 
 type openAIOutImageURL struct {
-	URL    string `json:"url"`
-	Detail string `json:"detail"`
+	URL string `json:"url"`
 }
 
 type openAIOutTC struct {
@@ -61,9 +56,8 @@ type openAIOutTCFunc struct {
 }
 
 type openAIOutTool struct {
-	Type              string            `json:"type"`
-	Function          openAIOutToolFunc `json:"function,omitempty"`
-	SearchContextSize string            `json:"search_context_size,omitempty"`
+	Type     string            `json:"type"`
+	Function openAIOutToolFunc `json:"function,omitempty"`
 }
 
 type openAIOutToolFunc struct {
@@ -73,7 +67,7 @@ type openAIOutToolFunc struct {
 }
 
 // EncodeOpenAIRequest encodes a canonical request as an OpenAI chat request.
-func EncodeOpenAIRequest(req *Request, upstreamModel string, stream bool, capability *config.ReasoningCapability, openwebUIWebSearch bool) ([]byte, error) {
+func EncodeOpenAIRequest(req *Request, upstreamModel string, stream bool, capability *config.ReasoningCapability) ([]byte, error) {
 	out := openAIOutRequest{
 		Model:       upstreamModel,
 		Stream:      stream,
@@ -83,11 +77,44 @@ func EncodeOpenAIRequest(req *Request, upstreamModel string, stream bool, capabi
 		Stop:        req.Params.Stop,
 	}
 
-	if req.ToolChoice != nil {
-		out.ToolChoice = encodeOpenAIToolChoice(req.ToolChoice)
+	if tc := req.ToolChoice; tc != nil {
+		switch tc.Type {
+		case "required":
+			out.ToolChoice = "required"
+		case "tool":
+			if tc.Name != "" {
+				out.ToolChoice = map[string]any{
+					"type":     "function",
+					"function": map[string]any{"name": tc.Name},
+				}
+			}
+		default:
+			out.ToolChoice = "auto"
+		}
 	}
-	if req.Params.ResponseFormat != nil {
-		out.ResponseFormat = encodeOpenAIResponseFormat(req.Params.ResponseFormat)
+	if rf := req.Params.ResponseFormat; rf != nil {
+		switch rf.Type {
+		case "json_object":
+			out.ResponseFormat = map[string]any{"type": "json_object"}
+		case "json_schema":
+			if rf.Schema != nil {
+				name := rf.Name
+				if name == "" {
+					name = "structured_output"
+				}
+				jsonSchema := map[string]any{
+					"name":   name,
+					"schema": rf.Schema,
+				}
+				if rf.Strict != nil {
+					jsonSchema["strict"] = *rf.Strict
+				}
+				out.ResponseFormat = map[string]any{
+					"type":        "json_schema",
+					"json_schema": jsonSchema,
+				}
+			}
+		}
 	}
 
 	if stream {
@@ -95,27 +122,18 @@ func EncodeOpenAIRequest(req *Request, upstreamModel string, stream bool, capabi
 	}
 
 	if r := req.Params.Reasoning; r != nil {
-		if effort, ok := buildOpenAIReasoning(r, capability); ok {
+		if effort, ok := BuildOpenAIReasoning(r, capability); ok {
 			out.ReasoningEffort = &effort
 		}
 	}
 
 	var encodedTools []openAIOutTool
-	enableOpenWebUISearch := false
+	hasWebSearch := false
 	for _, t := range req.Tools {
 		if t.Type == "web_search" {
-			if openwebUIWebSearch {
-				enableOpenWebUISearch = true
-				continue
-			}
-			tool := openAIOutTool{Type: "web_search"}
-			if t.MaxUses != nil {
-				tool.SearchContextSize = maxUsesToSearchContextSize(*t.MaxUses)
-			}
-			encodedTools = append(encodedTools, tool)
+			hasWebSearch = true
 			continue
 		}
-
 		encodedTools = append(encodedTools, openAIOutTool{
 			Type: "function",
 			Function: openAIOutToolFunc{
@@ -128,8 +146,8 @@ func EncodeOpenAIRequest(req *Request, upstreamModel string, stream bool, capabi
 	if len(encodedTools) > 0 {
 		out.Tools = &encodedTools
 	}
-	if enableOpenWebUISearch {
-		out.Features = &openAIOutFeatures{WebSearch: true}
+	if hasWebSearch {
+		out.Features = map[string]bool{"web_search": true}
 	}
 
 	for _, sys := range req.System {
@@ -150,7 +168,7 @@ func EncodeOpenAIRequest(req *Request, upstreamModel string, stream bool, capabi
 	// tool_calls unless the request also includes a tools definition. When the
 	// conversation contains prior tool calls but this turn has no tool defs,
 	// reconstruct minimal tool definitions from the function names in history.
-	if out.Tools == nil && !enableOpenWebUISearch {
+	if out.Tools == nil && !hasWebSearch {
 		if inferred := inferToolsFromHistory(out.Messages); len(inferred) > 0 {
 			out.Tools = &inferred
 		}
@@ -184,30 +202,6 @@ func inferToolsFromHistory(messages []openAIOutMsg) []openAIOutTool {
 	return tools
 }
 
-func buildOpenAIReasoning(
-	r *Reasoning,
-	capability *config.ReasoningCapability,
-) (string, bool) {
-	if r == nil {
-		return "", false
-	}
-
-	if r.Mode == "disabled" {
-		return mapOpenAIDisabledEffort(capability)
-	}
-	if r.Effort != nil {
-		return mapOpenAIEffort(*r.Effort, capability)
-	}
-	if r.BudgetTokens != nil {
-		return mapOpenAIBudgetToEffort(*r.BudgetTokens, capability)
-	}
-	if r.Mode != "" {
-		return mapOpenAIEffort("auto", capability)
-	}
-
-	return "", false
-}
-
 func encodeOpenAIMessage(m Message) []openAIOutMsg {
 	var toolCalls []openAIOutTC
 	var contentParts []openAIOutContentPart
@@ -223,18 +217,10 @@ func encodeOpenAIMessage(m Message) []openAIOutMsg {
 				})
 			}
 		case "image":
-			if b.Image != nil {
-				url := encodeOpenAIImageURL(b.Image)
-				if url == "" {
-					continue
-				}
-				detail := b.Image.Detail
-				if detail == "" {
-					detail = "auto"
-				}
+			if b.Image != nil && b.Image.Data != "" {
 				contentParts = append(contentParts, openAIOutContentPart{
 					Type:     "image_url",
-					ImageURL: &openAIOutImageURL{URL: url, Detail: detail},
+					ImageURL: &openAIOutImageURL{URL: fmt.Sprintf("data:%s;base64,%s", b.Image.MediaType, b.Image.Data)},
 				})
 			}
 		case "tool_call":
@@ -319,21 +305,10 @@ func encodeOpenAIToolResultContent(result *ToolResult) any {
 				})
 			}
 		case "image":
-			if b.Image != nil {
-				url := encodeOpenAIImageURL(b.Image)
-				if url == "" {
-					continue
-				}
-				detail := b.Image.Detail
-				if detail == "" {
-					detail = "auto"
-				}
+			if b.Image != nil && b.Image.Data != "" {
 				parts = append(parts, openAIOutContentPart{
-					Type: "image_url",
-					ImageURL: &openAIOutImageURL{
-						URL:    url,
-						Detail: detail,
-					},
+					Type:     "image_url",
+					ImageURL: &openAIOutImageURL{URL: fmt.Sprintf("data:%s;base64,%s", b.Image.MediaType, b.Image.Data)},
 				})
 			}
 		}
@@ -363,68 +338,6 @@ func encodeOpenAIToolResultContent(result *ToolResult) any {
 	default:
 		return parts
 	}
-}
-
-func encodeOpenAIToolChoice(choice *ToolChoice) any {
-	switch choice.Type {
-	case "required":
-		return "required"
-	case "tool":
-		if choice.Name == "" {
-			return nil
-		}
-		return map[string]any{
-			"type": "function",
-			"function": map[string]any{
-				"name": choice.Name,
-			},
-		}
-	default:
-		return "auto"
-	}
-}
-
-func encodeOpenAIResponseFormat(format *ResponseFormat) any {
-	switch format.Type {
-	case "json_object":
-		return map[string]any{"type": "json_object"}
-
-	case "json_schema":
-		if format.Schema == nil {
-			return nil
-		}
-		name := format.Name
-		if name == "" {
-			name = "structured_output"
-		}
-		jsonSchema := map[string]any{
-			"name":   name,
-			"schema": format.Schema,
-		}
-		if format.Strict != nil {
-			jsonSchema["strict"] = *format.Strict
-		}
-		return map[string]any{
-			"type":        "json_schema",
-			"json_schema": jsonSchema,
-		}
-	}
-
-	return nil
-}
-
-func encodeOpenAIImageURL(img *Image) string {
-	switch img.SourceType {
-	case "data_url", "base64":
-		if img.MediaType != nil && img.Data != nil {
-			return fmt.Sprintf("data:%s;base64,%s", *img.MediaType, *img.Data)
-		}
-	case "url":
-		if img.URL != nil {
-			return *img.URL
-		}
-	}
-	return ""
 }
 
 type openAIResponse struct {
@@ -601,16 +514,5 @@ func normalizeOpenAIStopReason(reason string) string {
 		return "tool_use"
 	default:
 		return reason
-	}
-}
-
-func maxUsesToSearchContextSize(maxUses int) string {
-	switch maxUses {
-	case 1:
-		return "low"
-	case 10:
-		return "high"
-	default:
-		return "medium"
 	}
 }

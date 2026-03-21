@@ -1,4 +1,4 @@
-package usage
+package server
 
 import (
 	"time"
@@ -9,8 +9,6 @@ type UsageRecord struct {
 	ID                       string    `json:"id" gorm:"primaryKey"`
 	TokenID                  string    `json:"token_id" gorm:"index"`
 	Timestamp                time.Time `json:"timestamp" gorm:"index"`
-	ClientProtocol           string    `json:"client_protocol"`
-	UpstreamProtocol         string    `json:"upstream_protocol"`
 	ClientModel              string    `json:"client_model"`
 	UpstreamModel            string    `json:"upstream_model"`
 	InputTokens              int64     `json:"input_tokens"`

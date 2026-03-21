@@ -5,19 +5,9 @@ import (
 	"strings"
 )
 
-func validateOverrideParams(prefix string, params OverrideParams) error {
-	if r := params.Reasoning; r != nil {
-		if r.Mode != nil && *r.Mode == "disabled" && r.BudgetTokens != nil {
-			return fmt.Errorf("%s: reasoning mode \"disabled\" cannot be combined with budget_tokens", prefix)
-		}
-	}
-	return nil
-}
-
 // Validate checks a loaded Config for consistency and required fields.
 // It returns the first error found.
 func Validate(cfg *Config) error {
-	// --- server ---
 	if cfg.Server.Host == "" {
 		return fmt.Errorf("server.host must not be empty")
 	}
@@ -27,7 +17,6 @@ func Validate(cfg *Config) error {
 	if strings.TrimSpace(cfg.Logging.RequestDir) == "" {
 		return fmt.Errorf("logging.request_dir must not be empty")
 	}
-	// --- storage ---
 	if cfg.Storage.Driver == "" {
 		return fmt.Errorf("storage.driver must not be empty")
 	}
@@ -38,7 +27,6 @@ func Validate(cfg *Config) error {
 		return fmt.Errorf("storage.dsn must not be empty")
 	}
 
-	// --- tokens ---
 	if len(cfg.Tokens) == 0 {
 		return fmt.Errorf("at least one token must be configured")
 	}
@@ -57,7 +45,6 @@ func Validate(cfg *Config) error {
 		seenTokenIDs[t.ID] = struct{}{}
 	}
 
-	// --- providers ---
 	if len(cfg.Providers) == 0 {
 		return fmt.Errorf("at least one provider must be configured")
 	}
@@ -119,11 +106,6 @@ func Validate(cfg *Config) error {
 			}
 		}
 
-		if p.Override.Defaults != nil {
-			if err := validateOverrideParams(prefix+" defaults", *p.Override.Defaults); err != nil {
-				return err
-			}
-		}
 		for j, rule := range p.Override.Rules {
 			rulePrefix := fmt.Sprintf("%s rules[%d]", prefix, j)
 			if rule.Target.ClientModel == nil && rule.Target.Stream == nil {
@@ -131,9 +113,6 @@ func Validate(cfg *Config) error {
 			}
 			if rule.Target.ClientModel != nil && strings.TrimSpace(*rule.Target.ClientModel) == "" {
 				return fmt.Errorf("%s: target.client_model must not be empty", rulePrefix)
-			}
-			if err := validateOverrideParams(rulePrefix, rule.Params); err != nil {
-				return err
 			}
 		}
 	}

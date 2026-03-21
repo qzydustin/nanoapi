@@ -10,20 +10,6 @@ func webSearchToolID() string {
 	return fmt.Sprintf("srvtoolu_%016x", rand.Uint64())
 }
 
-func newWebSearchSynthetic(toolUseID string, results []WebSearchResult) (*ServerToolUse, *WebSearchToolResult) {
-	clonedResults := append([]WebSearchResult(nil), results...)
-	serverToolUse := &ServerToolUse{
-		ID:    toolUseID,
-		Name:  "web_search",
-		Input: map[string]any{},
-	}
-	searchResult := &WebSearchToolResult{
-		ToolUseID: toolUseID,
-		Content:   clonedResults,
-	}
-	return serverToolUse, searchResult
-}
-
 // WebSearchResult holds a URL and title extracted from search results.
 type WebSearchResult struct {
 	URL   string
@@ -77,34 +63,22 @@ func ParseOpenWebUISources(data string) []WebSearchResult {
 	return results
 }
 
-// SynthesizeWebSearchBlocks returns synthetic server_tool_use and
-// web_search_tool_result blocks for non-streaming Anthropic responses.
-func SynthesizeWebSearchBlocks(results []WebSearchResult) (ContentBlock, ContentBlock) {
-	serverToolUse, searchResult := newWebSearchSynthetic(webSearchToolID(), results)
-	toolUseBlock := ContentBlock{
-		Type:          "server_tool_use",
-		ServerToolUse: serverToolUse,
+// SynthesizeWebSearchBlocks returns a single ContentBlock representing the
+// synthetic server_tool_use + web_search_tool_result pair.
+func SynthesizeWebSearchBlocks(results []WebSearchResult) ContentBlock {
+	return ContentBlock{
+		Type:               "web_search",
+		WebSearchToolUseID: webSearchToolID(),
+		WebSearchResults:   append([]WebSearchResult(nil), results...),
 	}
-	searchResultBlock := ContentBlock{
-		Type:                "web_search_tool_result",
-		WebSearchToolResult: searchResult,
-	}
-	return toolUseBlock, searchResultBlock
 }
 
-// SynthesizeWebSearchSSE returns canonical stream events for synthetic web
-// search blocks. Feed these through the encoder for correct index tracking.
-func SynthesizeWebSearchSSE(results []WebSearchResult) []StreamEvent {
-	serverToolUse, searchResult := newWebSearchSynthetic(webSearchToolID(), results)
-
-	return []StreamEvent{
-		{
-			Type:          EventServerToolUse,
-			ServerToolUse: serverToolUse,
-		},
-		{
-			Type:                EventWebSearchResult,
-			WebSearchToolResult: searchResult,
-		},
+// SynthesizeWebSearchSSE returns a canonical stream event for synthetic web
+// search blocks. Feed this through the encoder for correct index tracking.
+func SynthesizeWebSearchSSE(results []WebSearchResult) StreamEvent {
+	return StreamEvent{
+		Type:               EventWebSearch,
+		WebSearchToolUseID: webSearchToolID(),
+		WebSearchResults:   append([]WebSearchResult(nil), results...),
 	}
 }

@@ -16,20 +16,16 @@ providers:
     api_key: your-openwebui-jwt-token
     priority: 100
     force_stream: true
-    quirks:
-      openwebui_websearch: true
     models:
       claude-opus-4-6:
         upstream: bedrock-claude-4-6-opus
         reasoning:
-          allowed_efforts:
-            - low
-            - medium
-            - high
+          allowed_efforts: [low, medium, high]
+          effort_map:
+            max: high
       claude-haiku-4-5-20251001:
         upstream: bedrock-claude-4-5-haiku
         reasoning:
-          allowed_efforts:
-            - low
-            - medium
-            - high
+          allowed_efforts: [low, medium, high]
+          effort_map:
+            max: high

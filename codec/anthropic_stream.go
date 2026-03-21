@@ -1,10 +1,9 @@
 package codec
 
-import "strings"
-
-// ---------------------------------------------------------------------------
-// Anthropic Stream Encoding (canonical event → SSE for client)
-// ---------------------------------------------------------------------------
+import (
+	"encoding/json"
+	"strings"
+)
 
 // AnthropicStreamEncoder tracks state for client-side Anthropic SSE encoding.
 type AnthropicStreamEncoder struct {
@@ -107,23 +106,17 @@ func (e *AnthropicStreamEncoder) Encode(event StreamEvent) string {
 	case EventToolCallEnd:
 		e.closeBlock(&lines)
 
-	case EventServerToolUse:
-		if event.ServerToolUse == nil {
-			break
-		}
+	case EventWebSearch:
+		e.closeBlock(&lines)
+		toolUseID := event.WebSearchToolUseID
 		lines = append(lines, e.emitStandaloneBlock(map[string]any{
 			"type":  "server_tool_use",
-			"id":    event.ServerToolUse.ID,
-			"name":  event.ServerToolUse.Name,
-			"input": event.ServerToolUse.Input,
+			"id":    toolUseID,
+			"name":  "web_search",
+			"input": map[string]any{},
 		}))
-
-	case EventWebSearchResult:
-		if event.WebSearchToolResult == nil {
-			break
-		}
-		content := make([]any, len(event.WebSearchToolResult.Content))
-		for i, r := range event.WebSearchToolResult.Content {
+		content := make([]any, len(event.WebSearchResults))
+		for i, r := range event.WebSearchResults {
 			content[i] = map[string]any{
 				"type":              "web_search_result",
 				"url":               r.URL,
@@ -134,7 +127,7 @@ func (e *AnthropicStreamEncoder) Encode(event StreamEvent) string {
 		}
 		lines = append(lines, e.emitStandaloneBlock(map[string]any{
 			"type":        "web_search_tool_result",
-			"tool_use_id": event.WebSearchToolResult.ToolUseID,
+			"tool_use_id": toolUseID,
 			"content":     content,
 		}))
 
@@ -239,7 +232,8 @@ func (e *AnthropicStreamEncoder) anthropicUsagePayload() map[string]any {
 }
 
 func anthropicSSE(event string, payload any) string {
-	return "event: " + event + "\ndata: " + mustJSON(payload) + "\n\n"
+	b, _ := json.Marshal(payload)
+	return "event: " + event + "\ndata: " + string(b) + "\n\n"
 }
 
 func (e *AnthropicStreamEncoder) emitStandaloneBlock(contentBlock map[string]any) string {
