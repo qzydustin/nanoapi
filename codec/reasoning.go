@@ -3,7 +3,6 @@ package codec
 import (
 	"strings"
 
-	"github.com/qzydustin/nanoapi/canonical"
 	"github.com/qzydustin/nanoapi/config"
 )
 
@@ -31,50 +30,6 @@ func supportsEffort(allowed map[string]struct{}, effort string) bool {
 	}
 	_, ok := allowed[normalizeEffortValue(effort)]
 	return ok
-}
-
-func mapAnthropicEffort(effort string, capability *config.ReasoningCapability) (string, bool) {
-	effort = normalizeEffortValue(effort)
-	if effort == "" || effort == "none" || effort == "auto" {
-		return "", false
-	}
-
-	allowed := allowedEffortsMap(capability)
-	if len(allowed) == 0 {
-		switch effort {
-		case "minimal":
-			return "low", true
-		case "xhigh":
-			return "high", true
-		default:
-			return effort, true
-		}
-	}
-
-	if supportsEffort(allowed, effort) {
-		return effort, true
-	}
-	switch effort {
-	case "minimal":
-		if supportsEffort(allowed, "low") {
-			return "low", true
-		}
-	case "xhigh":
-		if supportsEffort(allowed, "max") {
-			return "max", true
-		}
-		if supportsEffort(allowed, "high") {
-			return "high", true
-		}
-	case "max":
-		if supportsEffort(allowed, "xhigh") {
-			return "xhigh", true
-		}
-		if supportsEffort(allowed, "high") {
-			return "high", true
-		}
-	}
-	return "", false
 }
 
 func mapOpenAIEffort(effort string, capability *config.ReasoningCapability) (string, bool) {
@@ -138,7 +93,7 @@ func mapOpenAIDisabledEffort(capability *config.ReasoningCapability) (string, bo
 }
 
 // DebugOpenAIReasoning returns the effective OpenAI effort for logging.
-func DebugOpenAIReasoning(r *canonical.CanonicalReasoning, capability *config.ReasoningCapability) (string, bool) {
+func DebugOpenAIReasoning(r *Reasoning, capability *config.ReasoningCapability) (string, bool) {
 	if r == nil {
 		return "", false
 	}

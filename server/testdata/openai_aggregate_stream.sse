@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-1","model":"gpt-4o","choices":[{"delta":{"role":"assistant","content":""},"index":0}]}
+data: {"id":"chatcmpl-1","model":"gpt-4o","choices":[{"delta":{"content":"Hello"},"index":0}]}
+data: {"id":"chatcmpl-1","model":"gpt-4o","choices":[{"delta":{"content":" World"},"index":0}]}
+data: {"id":"chatcmpl-1","model":"gpt-4o","choices":[{"delta":{},"finish_reason":"stop","index":0}]}
+data: {"id":"chatcmpl-1","model":"gpt-4o","choices":[],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}
+data: [DONE]

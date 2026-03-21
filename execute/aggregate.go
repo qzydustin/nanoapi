@@ -4,22 +4,20 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/qzydustin/nanoapi/canonical"
 	"github.com/qzydustin/nanoapi/codec"
 )
 
-// StreamAggregateState collects canonical stream events into a final
-// non-stream CanonicalResponse. Used for forced-stream aggregation.
+// StreamAggregateState collects stream events into a final
+// non-stream Response. Used for forced-stream aggregation.
 type StreamAggregateState struct {
 	ResponseID       string
 	Model            string
 	TextParts        []string
 	ThinkingParts    []string
 	ToolCalls        []*toolCallState
-	RawBlocks        []*rawBlockState
 	WebSearchResults []codec.WebSearchResult
 	StopReason       string
-	Usage            *canonical.CanonicalUsage
+	Usage            *codec.Usage
 }
 
 // toolCallState tracks a single tool call being accumulated from streaming.
@@ -29,14 +27,8 @@ type toolCallState struct {
 	Args strings.Builder
 }
 
-// rawBlockState tracks a passthrough block accumulated from streaming.
-type rawBlockState struct {
-	ContentBlock json.RawMessage
-	Deltas       []json.RawMessage
-}
-
-// Apply processes a single canonical stream event into the aggregate state.
-func (s *StreamAggregateState) Apply(event canonical.CanonicalStreamEvent) {
+// Apply processes a single stream event into the aggregate state.
+func (s *StreamAggregateState) Apply(event codec.StreamEvent) {
 	if event.ResponseID != "" && s.ResponseID == "" {
 		s.ResponseID = event.ResponseID
 	}
@@ -45,44 +37,29 @@ func (s *StreamAggregateState) Apply(event canonical.CanonicalStreamEvent) {
 	}
 
 	switch event.Type {
-	case canonical.EventTextDelta:
+	case codec.EventTextDelta:
 		if event.Text != "" {
 			s.TextParts = append(s.TextParts, event.Text)
 		}
-	case canonical.EventThinkingDelta:
+	case codec.EventThinkingDelta:
 		s.ThinkingParts = append(s.ThinkingParts, event.Text)
-	case canonical.EventToolCallStart:
+	case codec.EventToolCallStart:
 		s.ToolCalls = append(s.ToolCalls, &toolCallState{
 			ID:   event.ToolCallID,
 			Name: event.ToolCallName,
 		})
-	case canonical.EventToolCallDelta:
+	case codec.EventToolCallDelta:
 		if len(s.ToolCalls) > 0 {
 			s.ToolCalls[len(s.ToolCalls)-1].Args.WriteString(event.ArgumentsDelta)
 		}
-	case canonical.EventToolCallEnd:
+	case codec.EventToolCallEnd:
 		// Nothing to do; the tool call is already accumulated.
-	case canonical.EventRawBlockStart:
-		var envelope struct {
-			ContentBlock json.RawMessage `json:"content_block"`
-		}
-		json.Unmarshal(event.RawJSON, &envelope)
-		s.RawBlocks = append(s.RawBlocks, &rawBlockState{
-			ContentBlock: envelope.ContentBlock,
-		})
-	case canonical.EventRawBlockDelta:
-		if len(s.RawBlocks) > 0 {
-			s.RawBlocks[len(s.RawBlocks)-1].Deltas = append(
-				s.RawBlocks[len(s.RawBlocks)-1].Deltas, event.RawJSON)
-		}
-	case canonical.EventRawBlockStop:
-		// Nothing to do; the block is finalized in Finalize().
-	case canonical.EventMessageStop:
+	case codec.EventMessageStop:
 		s.StopReason = event.StopReason
-	case canonical.EventUsageFinal:
+	case codec.EventUsageFinal:
 		if event.Usage != nil {
 			if s.Usage == nil {
-				s.Usage = &canonical.CanonicalUsage{}
+				s.Usage = &codec.Usage{}
 			}
 			// Merge: later usage events may have partial data.
 			if event.Usage.InputTokens != nil {
@@ -107,36 +84,23 @@ func (s *StreamAggregateState) Apply(event canonical.CanonicalStreamEvent) {
 	}
 }
 
-// Finalize constructs a CanonicalResponse from the accumulated state.
-func (s *StreamAggregateState) Finalize() *canonical.CanonicalResponse {
-	var blocks []canonical.CanonicalContentBlock
+// Finalize constructs a Response from the accumulated state.
+func (s *StreamAggregateState) Finalize() *codec.Response {
+	var blocks []codec.ContentBlock
 
 	// Thinking output first.
 	if len(s.ThinkingParts) > 0 {
 		text := strings.Join(s.ThinkingParts, "")
-		blocks = append(blocks, canonical.CanonicalContentBlock{
+		blocks = append(blocks, codec.ContentBlock{
 			Type:     "thinking",
-			Thinking: &canonical.CanonicalThinkingBlock{Text: &text},
-		})
-	}
-
-	// Raw passthrough blocks.
-	for _, rb := range s.RawBlocks {
-		finalBlock := finalizeRawBlock(rb)
-		var header struct {
-			Type string `json:"type"`
-		}
-		json.Unmarshal(finalBlock, &header)
-		blocks = append(blocks, canonical.CanonicalContentBlock{
-			Type:    header.Type,
-			RawJSON: finalBlock,
+			Thinking: &codec.ThinkingBlock{Text: &text},
 		})
 	}
 
 	// Text output.
 	if len(s.TextParts) > 0 {
 		text := strings.Join(s.TextParts, "")
-		blocks = append(blocks, canonical.CanonicalContentBlock{
+		blocks = append(blocks, codec.ContentBlock{
 			Type: "text",
 			Text: &text,
 		})
@@ -149,9 +113,9 @@ func (s *StreamAggregateState) Finalize() *canonical.CanonicalResponse {
 		if argsStr != "" {
 			_ = json.Unmarshal([]byte(argsStr), &args)
 		}
-		blocks = append(blocks, canonical.CanonicalContentBlock{
+		blocks = append(blocks, codec.ContentBlock{
 			Type: "tool_call",
-			ToolCall: &canonical.CanonicalToolCall{
+			ToolCall: &codec.ToolCall{
 				ID:        tc.ID,
 				Name:      tc.Name,
 				Arguments: args,
@@ -159,56 +123,13 @@ func (s *StreamAggregateState) Finalize() *canonical.CanonicalResponse {
 		})
 	}
 
-	return &canonical.CanonicalResponse{
+	return &codec.Response{
 		ID:         s.ResponseID,
 		Model:      s.Model,
 		StopReason: s.StopReason,
 		Usage:      s.Usage,
-		Output: []canonical.CanonicalMessage{
+		Output: []codec.Message{
 			{Role: "assistant", Content: blocks},
 		},
 	}
-}
-
-// finalizeRawBlock merges input_json_delta partial_json values into the
-// content_block's input field.
-func finalizeRawBlock(rb *rawBlockState) json.RawMessage {
-	if len(rb.Deltas) == 0 {
-		return rb.ContentBlock
-	}
-
-	var inputBuf strings.Builder
-	for _, d := range rb.Deltas {
-		var delta struct {
-			Delta struct {
-				Type        string `json:"type"`
-				PartialJSON string `json:"partial_json,omitempty"`
-			} `json:"delta"`
-		}
-		if json.Unmarshal(d, &delta) == nil && delta.Delta.Type == "input_json_delta" {
-			inputBuf.WriteString(delta.Delta.PartialJSON)
-		}
-	}
-
-	if inputBuf.Len() == 0 {
-		return rb.ContentBlock
-	}
-
-	// Merge accumulated input into the content_block.
-	var input any
-	if json.Unmarshal([]byte(inputBuf.String()), &input) != nil {
-		return rb.ContentBlock
-	}
-
-	var block map[string]any
-	if json.Unmarshal(rb.ContentBlock, &block) != nil {
-		return rb.ContentBlock
-	}
-	block["input"] = input
-
-	merged, err := json.Marshal(block)
-	if err != nil {
-		return rb.ContentBlock
-	}
-	return merged
 }

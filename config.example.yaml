@@ -11,41 +11,25 @@ tokens:
     key: nk_replace_me
 
 providers:
-  - name: anthropic-main
-    protocol: anthropic_messages
-    base_url: https://api.anthropic.com
-    api_key: your-anthropic-api-key
+  - name: openwebui
+    base_url: https://chat.example.com/api
+    api_key: your-openwebui-jwt-token
     priority: 100
-    headers:
-      anthropic-version: "2023-06-01"
     force_stream: true
+    quirks:
+      openwebui_websearch: true
     models:
-      gpt-4o-mini:
-        upstream: claude-3-7-sonnet-20250219
-      gpt-4o:
-        upstream: claude-3-7-sonnet-20250219
-      claude-sonnet:
-        upstream: claude-3-7-sonnet-20250219
-    override:
-      defaults:
+      claude-opus-4-6:
+        upstream: bedrock-claude-4-6-opus
         reasoning:
-          mode: enabled
-          budget_tokens: 4096
-
-  - name: openai-main
-    protocol: openai_chat
-    base_url: https://api.openai.com
-    api_key: your-openai-api-key
-    priority: 90
-    force_stream: true
-    models:
-      gpt-4o-mini:
-        upstream: gpt-4o-mini
-      gpt-5-mini:
-        upstream: gpt-5-mini
-      claude-3-7-sonnet-20250219:
-        upstream: gpt-5-mini
-    override:
-      defaults:
+          allowed_efforts:
+            - low
+            - medium
+            - high
+      claude-haiku-4-5-20251001:
+        upstream: bedrock-claude-4-5-haiku
         reasoning:
-          effort: medium
+          allowed_efforts:
+            - low
+            - medium
+            - high

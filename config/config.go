@@ -35,10 +35,9 @@ type TokenConfig struct {
 	Key string `yaml:"key"`
 }
 
-// ProviderConfig describes one upstream AI provider.
+// ProviderConfig describes one upstream AI provider (always OpenAI-compatible).
 type ProviderConfig struct {
 	Name        string            `yaml:"name"`
-	Protocol    string            `yaml:"protocol"`
 	BaseURL     string            `yaml:"base_url"`
 	APIKey      string            `yaml:"api_key"`
 	Priority    int               `yaml:"priority"`

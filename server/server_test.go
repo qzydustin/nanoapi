@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,8 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/qzydustin/nanoapi/config"
 	"github.com/qzydustin/nanoapi/execute"
-	"github.com/qzydustin/nanoapi/provider"
-	"github.com/qzydustin/nanoapi/storage"
 	"github.com/qzydustin/nanoapi/token"
 	"github.com/qzydustin/nanoapi/usage"
 )
@@ -23,7 +20,7 @@ type testEnv struct {
 	cfg      *config.Config
 	tokenSvc *token.Service
 	usageSvc *usage.Service
-	selector *provider.Selector
+	selector *Selector
 	executor *execute.Executor
 	router   http.Handler
 	apiToken string
@@ -46,7 +43,6 @@ func newTestEnv(t *testing.T, upstreamHandler http.HandlerFunc) *testEnv {
 		Providers: []config.ProviderConfig{
 			{
 				Name:     "mock-anthropic",
-				Protocol: "anthropic_messages",
 				BaseURL:  upstream.URL,
 				APIKey:   "test-anthropic-key",
 				Priority: 100,
@@ -57,7 +53,6 @@ func newTestEnv(t *testing.T, upstreamHandler http.HandlerFunc) *testEnv {
 			},
 			{
 				Name:     "mock-openai",
-				Protocol: "openai_chat",
 				BaseURL:  upstream.URL,
 				APIKey:   "test-openai-key",
 				Priority: 90,
@@ -68,18 +63,13 @@ func newTestEnv(t *testing.T, upstreamHandler http.HandlerFunc) *testEnv {
 		},
 	}
 
-	db, err := storage.NewDB(cfg.Storage)
+	usageSvc, err := usage.NewService(cfg.Storage)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Migrate(&usage.UsageRecord{}); err != nil {
 		t.Fatal(err)
 	}
 
 	tokenSvc := token.NewService(cfg.Tokens)
-	usageStore := usage.NewSQLiteStore(db.Gorm)
-	usageSvc := usage.NewService(usageStore)
-	selector := provider.NewSelector(cfg.Providers)
+	selector := NewSelector(cfg.Providers)
 	executor := execute.NewExecutor()
 	router := NewRouter(tokenSvc, usageSvc, selector, executor, cfg.Logging, cfg.Server)
 
@@ -127,35 +117,6 @@ func TestAPIHealth(t *testing.T) {
 	}
 }
 
-func TestProxyOpenAIToAnthropicNonStream(t *testing.T) {
-	env := newTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/messages" {
-			t.Errorf("unexpected upstream path: %s", r.URL.Path)
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(fixtureString(t, "anthropic_upstream_nonstream_response.json")))
-	})
-
-	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(fixtureString(t, "openai_basic_request.json")))
-	req.Header.Set("Authorization", "Bearer "+env.apiToken)
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	env.router.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
-	}
-
-	records := requireUsageRecords(t, env, 1)
-	if !records[0].Success {
-		t.Errorf("usage success = false")
-	}
-	if records[0].TokenID != env.tokenID {
-		t.Errorf("token_id = %q", records[0].TokenID)
-	}
-}
-
 func TestProxyAnthropicToOpenAINonStream(t *testing.T) {
 	env := newTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
@@ -175,12 +136,36 @@ func TestProxyAnthropicToOpenAINonStream(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
+
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["model"] != "claude-sonnet" {
+		t.Fatalf("model = %v, want claude-sonnet", body["model"])
+	}
+	if id, _ := body["id"].(string); !strings.HasPrefix(id, "msg_") {
+		t.Fatalf("id = %q, want msg_*", id)
+	}
+	if stopSequence, ok := body["stop_sequence"]; !ok {
+		t.Fatalf("stop_sequence key missing")
+	} else if stopSequence != nil {
+		t.Fatalf("stop_sequence = %v, want null", stopSequence)
+	}
+
+	records := requireUsageRecords(t, env, 1)
+	if !records[0].Success {
+		t.Errorf("usage success = false")
+	}
+	if records[0].TokenID != env.tokenID {
+		t.Errorf("token_id = %q", records[0].TokenID)
+	}
 }
 
 func TestProxyMissingToken(t *testing.T) {
 	env := newTestEnv(t, func(w http.ResponseWriter, r *http.Request) {})
 
-	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(fixtureString(t, "openai_basic_request.json")))
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(fixtureString(t, "anthropic_basic_request.json")))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	env.router.ServeHTTP(w, req)
@@ -193,7 +178,7 @@ func TestProxyMissingToken(t *testing.T) {
 func TestProxyModelNotFoundRecordsFailure(t *testing.T) {
 	env := newTestEnv(t, func(w http.ResponseWriter, r *http.Request) {})
 
-	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(fixtureString(t, "openai_unknown_model_request.json")))
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(fixtureString(t, "anthropic_unknown_model_request.json")))
 	req.Header.Set("Authorization", "Bearer "+env.apiToken)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -329,17 +314,17 @@ func TestProxyForcedStreamAggregation(t *testing.T) {
 	env := newTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher, _ := w.(http.Flusher)
-		fmt.Fprint(w, fixtureString(t, "anthropic_aggregate_stream.sse"))
+		fmt.Fprint(w, fixtureString(t, "openai_aggregate_stream.sse"))
 		if flusher != nil {
 			flusher.Flush()
 		}
 	})
 
-	env.cfg.Providers[0].ForceStream = true
-	env.selector = provider.NewSelector(env.cfg.Providers)
+	env.cfg.Providers[1].ForceStream = true
+	env.selector = NewSelector(env.cfg.Providers)
 	env.router = NewRouter(env.tokenSvc, env.usageSvc, env.selector, env.executor, env.cfg.Logging, env.cfg.Server)
 
-	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(fixtureString(t, "openai_basic_request.json")))
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(fixtureString(t, "anthropic_basic_request.json")))
 	req.Header.Set("Authorization", "Bearer "+env.apiToken)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -348,26 +333,35 @@ func TestProxyForcedStreamAggregation(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
+
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["model"] != "claude-sonnet" {
+		t.Fatalf("model = %v, want claude-sonnet", body["model"])
+	}
+	if id, _ := body["id"].(string); !strings.HasPrefix(id, "msg_") {
+		t.Fatalf("id = %q, want msg_*", id)
+	}
+	if stopSequence, ok := body["stop_sequence"]; !ok {
+		t.Fatalf("stop_sequence key missing")
+	} else if stopSequence != nil {
+		t.Fatalf("stop_sequence = %v, want null", stopSequence)
+	}
 }
 
-func TestProxyReasoningMapping(t *testing.T) {
+func TestProxyPassthroughStreamNormalizesMessageStartMetadata(t *testing.T) {
 	env := newTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("read upstream request: %v", err)
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		fmt.Fprint(w, fixtureString(t, "openai_aggregate_stream.sse"))
+		if flusher != nil {
+			flusher.Flush()
 		}
-		if !strings.Contains(string(body), `"thinking":{"type":"adaptive"}`) {
-			t.Errorf("missing thinking mapping: %s", string(body))
-		}
-		if !strings.Contains(string(body), `"output_config":{"effort":"high"}`) {
-			t.Errorf("missing effort mapping: %s", string(body))
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(fixtureString(t, "anthropic_reasoning_response.json")))
 	})
 
-	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(fixtureString(t, "openai_reasoning_request.json")))
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(fixtureString(t, "anthropic_stream_request.json")))
 	req.Header.Set("Authorization", "Bearer "+env.apiToken)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -375,5 +369,19 @@ func TestProxyReasoningMapping(t *testing.T) {
 
 	if w.Code != 200 {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, `"model":"claude-sonnet"`) {
+		t.Fatalf("message_start model not normalized: %s", body)
+	}
+	if !strings.Contains(body, `"id":"msg_`) {
+		t.Fatalf("message_start id not normalized: %s", body)
+	}
+	if strings.Contains(body, `"model":"gpt-4o"`) {
+		t.Fatalf("should not expose upstream model: %s", body)
+	}
+	if strings.Contains(body, `"id":"chatcmpl-1"`) {
+		t.Fatalf("should not expose upstream id: %s", body)
 	}
 }

@@ -24,9 +24,6 @@ type UsageRecord struct {
 	LatencyMs                *int64    `json:"latency_ms,omitempty"`
 }
 
-// TableName overrides the default table name.
-func (UsageRecord) TableName() string { return "usage_records" }
-
 // UsageSummary is an aggregated view of usage data.
 type UsageSummary struct {
 	RequestCount             int64 `json:"request_count"`

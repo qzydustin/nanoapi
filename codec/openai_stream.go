@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"github.com/qzydustin/nanoapi/canonical"
 )
 
 // ---------------------------------------------------------------------------
@@ -47,7 +45,7 @@ type openAIStreamTCFunc struct {
 // DecodeOpenAIStreamLine parses a single SSE "data: ..." line from an OpenAI
 // stream into zero or more canonical stream events.
 // Returns (events, done, error) where done=true means "[DONE]".
-func DecodeOpenAIStreamLine(line string) ([]canonical.CanonicalStreamEvent, bool, error) {
+func DecodeOpenAIStreamLine(line string) ([]StreamEvent, bool, error) {
 	line = strings.TrimSpace(line)
 	if line == "" || strings.HasPrefix(line, ":") {
 		return nil, false, nil // keep-alive or comment
@@ -71,7 +69,7 @@ func DecodeOpenAIStreamLine(line string) ([]canonical.CanonicalStreamEvent, bool
 		return nil, false, fmt.Errorf("decode openai stream chunk: %w", err)
 	}
 
-	var events []canonical.CanonicalStreamEvent
+	var events []StreamEvent
 
 	// Metadata from first chunk.
 	if chunk.ID != "" || chunk.Model != "" {
@@ -85,8 +83,8 @@ func DecodeOpenAIStreamLine(line string) ([]canonical.CanonicalStreamEvent, bool
 
 		// Thinking/reasoning delta
 		if d.ReasoningContent != nil && *d.ReasoningContent != "" {
-			events = append(events, canonical.CanonicalStreamEvent{
-				Type:       canonical.EventThinkingDelta,
+			events = append(events, StreamEvent{
+				Type:       EventThinkingDelta,
 				Text:       *d.ReasoningContent,
 				ResponseID: chunk.ID,
 				Model:      chunk.Model,
@@ -94,8 +92,8 @@ func DecodeOpenAIStreamLine(line string) ([]canonical.CanonicalStreamEvent, bool
 		}
 		for _, tb := range d.ThinkingBlocks {
 			if tb.Signature != nil && *tb.Signature != "" {
-				events = append(events, canonical.CanonicalStreamEvent{
-					Type:       canonical.EventThinkingSignature,
+				events = append(events, StreamEvent{
+					Type:       EventThinkingSignature,
 					Signature:  *tb.Signature,
 					ResponseID: chunk.ID,
 					Model:      chunk.Model,
@@ -105,8 +103,8 @@ func DecodeOpenAIStreamLine(line string) ([]canonical.CanonicalStreamEvent, bool
 
 		// Text delta
 		if d.Content != nil && *d.Content != "" {
-			events = append(events, canonical.CanonicalStreamEvent{
-				Type:       canonical.EventTextDelta,
+			events = append(events, StreamEvent{
+				Type:       EventTextDelta,
 				Text:       *d.Content,
 				ResponseID: chunk.ID,
 				Model:      chunk.Model,
@@ -117,8 +115,8 @@ func DecodeOpenAIStreamLine(line string) ([]canonical.CanonicalStreamEvent, bool
 		for _, tc := range d.ToolCalls {
 			if tc.ID != "" {
 				// tool_call_start
-				events = append(events, canonical.CanonicalStreamEvent{
-					Type:         canonical.EventToolCallStart,
+				events = append(events, StreamEvent{
+					Type:         EventToolCallStart,
 					ToolCallID:   tc.ID,
 					ToolCallName: tc.Function.Name,
 					ResponseID:   chunk.ID,
@@ -126,8 +124,8 @@ func DecodeOpenAIStreamLine(line string) ([]canonical.CanonicalStreamEvent, bool
 				})
 			}
 			if tc.Function.Arguments != "" {
-				events = append(events, canonical.CanonicalStreamEvent{
-					Type:           canonical.EventToolCallDelta,
+				events = append(events, StreamEvent{
+					Type:           EventToolCallDelta,
 					ArgumentsDelta: tc.Function.Arguments,
 					ResponseID:     chunk.ID,
 					Model:          chunk.Model,
@@ -137,8 +135,8 @@ func DecodeOpenAIStreamLine(line string) ([]canonical.CanonicalStreamEvent, bool
 
 		// Finish reason
 		if c.FinishReason != nil && *c.FinishReason != "" {
-			events = append(events, canonical.CanonicalStreamEvent{
-				Type:       canonical.EventMessageStop,
+			events = append(events, StreamEvent{
+				Type:       EventMessageStop,
 				StopReason: normalizeOpenAIStopReason(*c.FinishReason),
 				ResponseID: chunk.ID,
 				Model:      chunk.Model,
@@ -148,24 +146,9 @@ func DecodeOpenAIStreamLine(line string) ([]canonical.CanonicalStreamEvent, bool
 
 	// Usage (typically in the last chunk when stream_options.include_usage=true)
 	if chunk.Usage != nil {
-		in64 := int64(chunk.Usage.PromptTokens)
-		out64 := int64(chunk.Usage.CompletionTokens)
-		total64 := int64(chunk.Usage.TotalTokens)
-		usage := &canonical.CanonicalUsage{
-			InputTokens:  &in64,
-			OutputTokens: &out64,
-			TotalTokens:  &total64,
-		}
-		if chunk.Usage.CompletionTokensDetails != nil && chunk.Usage.CompletionTokensDetails.ReasoningTokens != nil {
-			reasoning64 := int64(*chunk.Usage.CompletionTokensDetails.ReasoningTokens)
-			usage.ReasoningTokens = &reasoning64
-		}
-		if chunk.Usage.PromptTokensDetails != nil && chunk.Usage.PromptTokensDetails.CachedTokens != nil {
-			cacheRead64 := int64(*chunk.Usage.PromptTokensDetails.CachedTokens)
-			usage.CacheReadTokens = &cacheRead64
-		}
-		events = append(events, canonical.CanonicalStreamEvent{
-			Type:       canonical.EventUsageFinal,
+		usage := decodeOpenAIUsage(chunk.Usage)
+		events = append(events, StreamEvent{
+			Type:       EventUsageFinal,
 			Usage:      usage,
 			ResponseID: chunk.ID,
 			Model:      chunk.Model,
@@ -176,120 +159,8 @@ func DecodeOpenAIStreamLine(line string) ([]canonical.CanonicalStreamEvent, bool
 }
 
 // ---------------------------------------------------------------------------
-// OpenAI Stream Encoding (canonical event → SSE line for client)
+// OpenAI Stream Encoding — removed (no OpenAI client)
 // ---------------------------------------------------------------------------
-
-// openAIStreamState tracks tool call indexing for client-side SSE encoding.
-type OpenAIStreamEncoder struct {
-	chunkID     string
-	model       string
-	toolCallIdx int
-}
-
-// NewOpenAIStreamEncoder creates a new encoder for client-side OpenAI SSE.
-func NewOpenAIStreamEncoder() *OpenAIStreamEncoder {
-	return &OpenAIStreamEncoder{}
-}
-
-// Encode converts a canonical stream event into an OpenAI SSE line.
-func (e *OpenAIStreamEncoder) Encode(event canonical.CanonicalStreamEvent) string {
-	if event.ResponseID != "" {
-		e.chunkID = event.ResponseID
-	}
-	if event.Model != "" {
-		e.model = event.Model
-	}
-
-	switch event.Type {
-	case canonical.EventTextDelta:
-		return e.choiceChunk(map[string]any{"content": event.Text}, nil)
-
-	case canonical.EventThinkingDelta:
-		return e.choiceChunk(map[string]any{"reasoning_content": event.Text}, nil)
-
-	case canonical.EventToolCallStart:
-		tc := map[string]any{
-			"index":    e.toolCallIdx,
-			"id":       event.ToolCallID,
-			"type":     "function",
-			"function": map[string]any{"name": event.ToolCallName, "arguments": ""},
-		}
-		return e.choiceChunk(map[string]any{"tool_calls": []map[string]any{tc}}, nil)
-
-	case canonical.EventToolCallDelta:
-		tc := map[string]any{
-			"index":    e.toolCallIdx,
-			"function": map[string]any{"arguments": event.ArgumentsDelta},
-		}
-		return e.choiceChunk(map[string]any{"tool_calls": []map[string]any{tc}}, nil)
-
-	case canonical.EventToolCallEnd:
-		e.toolCallIdx++
-		return ""
-
-	case canonical.EventMessageStop:
-		fr := denormalizeOpenAIStopReason(event.StopReason)
-		return e.choiceChunk(map[string]any{}, fr)
-
-	case canonical.EventUsageFinal:
-		u := map[string]any{}
-		if event.Usage != nil {
-			if event.Usage.InputTokens != nil {
-				u["prompt_tokens"] = *event.Usage.InputTokens
-			}
-			if event.Usage.OutputTokens != nil {
-				u["completion_tokens"] = *event.Usage.OutputTokens
-			}
-			if event.Usage.TotalTokens != nil {
-				u["total_tokens"] = *event.Usage.TotalTokens
-			} else if event.Usage.InputTokens != nil && event.Usage.OutputTokens != nil {
-				u["total_tokens"] = *event.Usage.InputTokens + *event.Usage.OutputTokens
-			}
-			if event.Usage.CacheReadTokens != nil {
-				u["prompt_tokens_details"] = map[string]any{
-					"cached_tokens": *event.Usage.CacheReadTokens,
-				}
-			}
-			if event.Usage.ReasoningTokens != nil {
-				u["completion_tokens_details"] = map[string]any{
-					"reasoning_tokens": *event.Usage.ReasoningTokens,
-				}
-			}
-		}
-		return openAISSE(map[string]any{
-			"id": e.chunkID, "object": "chat.completion.chunk", "model": e.model,
-			"choices": []any{},
-			"usage":   u,
-		})
-	}
-
-	return ""
-}
-
-// Done returns the final [DONE] SSE line.
-func (e *OpenAIStreamEncoder) Done() string {
-	return "data: [DONE]\n\n"
-}
-
-func (e *OpenAIStreamEncoder) choiceChunk(delta map[string]any, finishReason any) string {
-	choice := map[string]any{
-		"index": 0,
-		"delta": delta,
-	}
-	if finishReason != nil {
-		choice["finish_reason"] = finishReason
-	}
-	return openAISSE(map[string]any{
-		"id":      e.chunkID,
-		"object":  "chat.completion.chunk",
-		"model":   e.model,
-		"choices": []map[string]any{choice},
-	})
-}
-
-func openAISSE(chunk any) string {
-	return "data: " + mustJSON(chunk) + "\n\n"
-}
 
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)

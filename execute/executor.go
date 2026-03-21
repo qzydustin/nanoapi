@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qzydustin/nanoapi/canonical"
 	"github.com/qzydustin/nanoapi/codec"
+	"github.com/qzydustin/nanoapi/config"
 )
 
 // ExecutionMode describes how the gateway executes an upstream request.
@@ -43,20 +43,19 @@ func DecideMode(clientStream bool, forceStream bool) ExecutionMode {
 
 // ExecutionPlan describes a fully prepared upstream request.
 type ExecutionPlan struct {
-	Mode             ExecutionMode
-	ClientProtocol   canonical.Protocol
-	UpstreamProtocol canonical.Protocol
-	URL              string
-	Headers          map[string]string
-	Body             []byte
-	Stream           bool // actual upstream stream flag
-	HasWebSearch     bool // request includes a web_search tool
+	Mode         ExecutionMode
+	URL          string
+	Headers      map[string]string
+	Body         []byte
+	Stream       bool // actual upstream stream flag
+	HasWebSearch bool // request includes a web_search tool
 }
 
 // ExecutionResult is the outcome of executing an upstream request.
 type ExecutionResult struct {
 	StatusCode int
 	Headers    map[string][]string
+	StartedAt  time.Time
 
 	// Non-stream result body (ModeDirectNonStream or error bodies).
 	Body []byte
@@ -65,10 +64,13 @@ type ExecutionResult struct {
 	StreamReader io.ReadCloser
 
 	// Aggregated response for ModeAggregateStream.
-	AggregatedResponse *canonical.CanonicalResponse
+	AggregatedResponse *codec.Response
 
 	// WebSearchResults from OpenWebUI sources events (ModeAggregateStream).
 	WebSearchResults []codec.WebSearchResult
+
+	// StreamStats captures timing for streamed upstream responses.
+	StreamStats *StreamStats
 }
 
 // Executor handles upstream HTTP communication.
@@ -93,6 +95,7 @@ func NewExecutor() *Executor {
 // Execute sends the upstream request and returns the result according to the
 // execution mode.
 func (e *Executor) Execute(ctx context.Context, plan *ExecutionPlan) (*ExecutionResult, error) {
+	startedAt := time.Now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, plan.URL, strings.NewReader(string(plan.Body)))
 	if err != nil {
 		return nil, fmt.Errorf("create upstream request: %w", err)
@@ -109,6 +112,7 @@ func (e *Executor) Execute(ctx context.Context, plan *ExecutionPlan) (*Execution
 	result := &ExecutionResult{
 		StatusCode: resp.StatusCode,
 		Headers:    resp.Header,
+		StartedAt:  startedAt,
 	}
 
 	// For non-2xx responses, read the error body and return.
@@ -134,12 +138,12 @@ func (e *Executor) Execute(ctx context.Context, plan *ExecutionPlan) (*Execution
 		return result, nil
 
 	case ModeAggregateStream:
-		aggregated, searchResults, err := e.aggregateStream(plan.UpstreamProtocol, resp.Body)
+		aggregated, searchResults, streamStats, err := e.aggregateStream(resp.Body, startedAt)
 		resp.Body.Close()
+		result.StreamStats = streamStats
 		if err != nil {
-			return nil, fmt.Errorf("aggregate stream: %w", err)
+			return result, fmt.Errorf("aggregate stream: %w", err)
 		}
-		aggregated.UpstreamProtocol = plan.UpstreamProtocol
 		result.AggregatedResponse = aggregated
 		result.WebSearchResults = searchResults
 		return result, nil
@@ -150,65 +154,66 @@ func (e *Executor) Execute(ctx context.Context, plan *ExecutionPlan) (*Execution
 	}
 }
 
-// aggregateStream reads an SSE stream and collects canonical events into a
-// final CanonicalResponse.
-func (e *Executor) aggregateStream(protocol canonical.Protocol, body io.Reader) (*canonical.CanonicalResponse, []codec.WebSearchResult, error) {
+// aggregateStream reads an OpenAI SSE stream and collects events
+// into a final Response.
+func (e *Executor) aggregateStream(body io.Reader, startedAt time.Time) (*codec.Response, []codec.WebSearchResult, *StreamStats, error) {
 	state := &StreamAggregateState{}
+	tracker := NewStreamStatsTracker(startedAt)
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), MaxSSELineSize)
 
-	switch protocol {
-	case canonical.ProtocolOpenAIChat:
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.HasPrefix(line, "data: ") {
-				if results := codec.ParseOpenWebUISources(strings.TrimPrefix(line, "data: ")); results != nil {
-					state.WebSearchResults = results
-					continue
-				}
-			}
-			events, done, err := codec.DecodeOpenAIStreamLine(line)
-			if err != nil {
-				return nil, nil, err
-			}
-			for _, ev := range events {
-				state.Apply(ev)
-			}
-			if done {
-				break
-			}
-		}
-
-	case canonical.ProtocolAnthropicMessage:
-		dec := codec.NewAnthropicStreamDecoder()
-		var currentEventType string
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.HasPrefix(line, "event: ") {
-				currentEventType = strings.TrimPrefix(line, "event: ")
-				continue
-			}
-			if strings.HasPrefix(line, "data: ") {
-				data := strings.TrimPrefix(line, "data: ")
-				events, err := dec.DecodeLine(currentEventType, data)
-				if err != nil {
-					return nil, nil, err
-				}
-				for _, ev := range events {
-					state.Apply(ev)
-				}
-				currentEventType = ""
+	for scanner.Scan() {
+		line := scanner.Text()
+		tracker.ObserveLine(line)
+		if strings.HasPrefix(line, "data: ") {
+			if results := codec.ParseOpenWebUISources(strings.TrimPrefix(line, "data: ")); results != nil {
+				state.WebSearchResults = results
 				continue
 			}
 		}
-
-	default:
-		return nil, nil, fmt.Errorf("unsupported upstream protocol for aggregation: %s", protocol)
+		events, done, err := codec.DecodeOpenAIStreamLine(line)
+		if err != nil {
+			return nil, nil, tracker.Snapshot(), err
+		}
+		for _, ev := range events {
+			state.Apply(ev)
+		}
+		if done {
+			break
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, nil, fmt.Errorf("scan stream: %w", err)
+		return nil, nil, tracker.Snapshot(), fmt.Errorf("scan stream: %w", err)
 	}
 
-	return state.Finalize(), state.WebSearchResults, nil
+	return state.Finalize(), state.WebSearchResults, tracker.Snapshot(), nil
+}
+
+// BuildUpstreamURL constructs the upstream API endpoint URL.
+func BuildUpstreamURL(baseURL string) string {
+	for len(baseURL) > 0 && baseURL[len(baseURL)-1] == '/' {
+		baseURL = baseURL[:len(baseURL)-1]
+	}
+	return baseURL + "/v1/chat/completions"
+}
+
+// BuildHeaders constructs the upstream request headers from provider config.
+func BuildHeaders(provider *config.ProviderConfig, stream bool) map[string]string {
+	headers := map[string]string{
+		"Content-Type": "application/json",
+	}
+
+	if stream {
+		headers["Accept"] = "text/event-stream"
+	}
+
+	headers["Authorization"] = fmt.Sprintf("Bearer %s", provider.APIKey)
+
+	// Merge provider-level static headers.
+	for k, v := range provider.Headers {
+		headers[k] = v
+	}
+
+	return headers
 }

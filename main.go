@@ -13,9 +13,7 @@ import (
 
 	"github.com/qzydustin/nanoapi/config"
 	"github.com/qzydustin/nanoapi/execute"
-	"github.com/qzydustin/nanoapi/provider"
 	"github.com/qzydustin/nanoapi/server"
-	"github.com/qzydustin/nanoapi/storage"
 	"github.com/qzydustin/nanoapi/token"
 	"github.com/qzydustin/nanoapi/usage"
 )
@@ -35,22 +33,14 @@ func main() {
 		log.Fatalf("invalid config: %v", err)
 	}
 
-	// Initialize storage.
-	db, err := storage.NewDB(cfg.Storage)
-	if err != nil {
-		log.Fatalf("failed to initialize storage: %v", err)
-	}
-	if err := db.Migrate(&usage.UsageRecord{}); err != nil {
-		log.Fatalf("failed to migrate database: %v", err)
-	}
-
 	// Initialize services.
+	usageSvc, err := usage.NewService(cfg.Storage)
+	if err != nil {
+		log.Fatalf("failed to initialize usage service: %v", err)
+	}
+
 	tokenSvc := token.NewService(cfg.Tokens)
-
-	usageStore := usage.NewSQLiteStore(db.Gorm)
-	usageSvc := usage.NewService(usageStore)
-
-	selector := provider.NewSelector(cfg.Providers)
+	selector := server.NewSelector(cfg.Providers)
 	executor := execute.NewExecutor()
 
 	// Build router.

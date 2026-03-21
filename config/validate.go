@@ -75,9 +75,6 @@ func Validate(cfg *Config) error {
 		if p.Name == "" {
 			return fmt.Errorf("%s: name must not be empty", prefix)
 		}
-		if p.Protocol != "openai_chat" && p.Protocol != "anthropic_messages" {
-			return fmt.Errorf("%s: protocol must be \"openai_chat\" or \"anthropic_messages\" (got %q)", prefix, p.Protocol)
-		}
 		if p.BaseURL == "" {
 			return fmt.Errorf("%s: base_url must not be empty", prefix)
 		}

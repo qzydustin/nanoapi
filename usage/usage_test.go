@@ -6,34 +6,28 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/qzydustin/nanoapi/config"
-	"github.com/qzydustin/nanoapi/storage"
 )
 
-func setupTestDB(t *testing.T) *storage.DB {
+func setupTestService(t *testing.T) *Service {
 	t.Helper()
-	db, err := storage.NewDB(config.StorageConfig{Driver: "sqlite", DSN: ":memory:"})
+	svc, err := NewService(config.StorageConfig{Driver: "sqlite", DSN: ":memory:"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Migrate(&UsageRecord{}); err != nil {
-		t.Fatal(err)
-	}
-	return db
+	return svc
 }
 
 func TestRecordAndQuery(t *testing.T) {
-	db := setupTestDB(t)
-	store := NewSQLiteStore(db.Gorm)
-	svc := NewService(store)
+	svc := setupTestService(t)
 
 	rec := &UsageRecord{
 		ID:                       uuid.New().String(),
 		TokenID:                  "tok_1",
 		Timestamp:                time.Now(),
-		ClientProtocol:           "openai_chat",
-		UpstreamProtocol:         "anthropic_messages",
-		ClientModel:              "gpt-4o",
-		UpstreamModel:            "claude-3-7-sonnet",
+		ClientProtocol:           "anthropic_messages",
+		UpstreamProtocol:         "openai_chat",
+		ClientModel:              "claude-opus-4-6",
+		UpstreamModel:            "bedrock-claude-4-6-opus",
 		InputTokens:              100,
 		OutputTokens:             50,
 		CacheCreationInputTokens: 20,
@@ -59,9 +53,7 @@ func TestRecordAndQuery(t *testing.T) {
 }
 
 func TestSummary(t *testing.T) {
-	db := setupTestDB(t)
-	store := NewSQLiteStore(db.Gorm)
-	svc := NewService(store)
+	svc := setupTestService(t)
 
 	for i := 0; i < 3; i++ {
 		svc.RecordUsage(&UsageRecord{

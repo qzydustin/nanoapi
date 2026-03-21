@@ -2,8 +2,8 @@ package execute
 
 import (
 	"testing"
+	"time"
 
-	"github.com/qzydustin/nanoapi/canonical"
 	"github.com/qzydustin/nanoapi/codec"
 )
 
@@ -28,33 +28,52 @@ func TestDecideMode(t *testing.T) {
 
 func TestBuildUpstreamURL(t *testing.T) {
 	tests := []struct {
-		base     string
-		protocol canonical.Protocol
-		want     string
+		base string
+		want string
 	}{
-		{"https://api.openai.com", canonical.ProtocolOpenAIChat, "https://api.openai.com/v1/chat/completions"},
-		{"https://api.openai.com/", canonical.ProtocolOpenAIChat, "https://api.openai.com/v1/chat/completions"},
-		{"https://api.anthropic.com", canonical.ProtocolAnthropicMessage, "https://api.anthropic.com/v1/messages"},
+		{"https://api.openai.com", "https://api.openai.com/v1/chat/completions"},
+		{"https://api.openai.com/", "https://api.openai.com/v1/chat/completions"},
 	}
 	for _, tt := range tests {
-		got := BuildUpstreamURL(tt.base, tt.protocol)
+		got := BuildUpstreamURL(tt.base)
 		if got != tt.want {
-			t.Errorf("BuildUpstreamURL(%q, %q) = %q, want %q", tt.base, tt.protocol, got, tt.want)
+			t.Errorf("BuildUpstreamURL(%q) = %q, want %q", tt.base, got, tt.want)
 		}
+	}
+}
+
+func TestStreamStatsTracker(t *testing.T) {
+	tracker := NewStreamStatsTracker(time.Now().Add(-50 * time.Millisecond))
+
+	tracker.ObserveLine("")
+	tracker.ObserveLine(": ping")
+	tracker.ObserveLine("data: {\"hello\":\"world\"}")
+	time.Sleep(10 * time.Millisecond)
+	tracker.ObserveLine("data: [DONE]")
+
+	stats := tracker.Snapshot()
+	if stats == nil {
+		t.Fatal("stats should not be nil")
+	}
+	if stats.TTFTMs == nil || *stats.TTFTMs < 0 {
+		t.Fatalf("ttft_ms = %+v", stats.TTFTMs)
+	}
+	if stats.LastChunkGapMs == nil || *stats.LastChunkGapMs <= 0 {
+		t.Fatalf("last_chunk_gap_ms = %+v", stats.LastChunkGapMs)
 	}
 }
 
 func TestStreamAggregation_TextOnly(t *testing.T) {
 	state := &StreamAggregateState{}
-	state.Apply(canonical.CanonicalStreamEvent{
-		Type: canonical.EventTextDelta, Text: "Hello ",
+	state.Apply(codec.StreamEvent{
+		Type: codec.EventTextDelta, Text: "Hello ",
 		ResponseID: "msg_1", Model: "gpt-4o",
 	})
-	state.Apply(canonical.CanonicalStreamEvent{
-		Type: canonical.EventTextDelta, Text: "World",
+	state.Apply(codec.StreamEvent{
+		Type: codec.EventTextDelta, Text: "World",
 	})
-	state.Apply(canonical.CanonicalStreamEvent{
-		Type: canonical.EventMessageStop, StopReason: "end_turn",
+	state.Apply(codec.StreamEvent{
+		Type: codec.EventMessageStop, StopReason: "end_turn",
 	})
 
 	resp := state.Finalize()
@@ -72,15 +91,15 @@ func TestStreamAggregation_TextOnly(t *testing.T) {
 
 func TestStreamAggregation_ThinkingAndText(t *testing.T) {
 	state := &StreamAggregateState{}
-	state.Apply(canonical.CanonicalStreamEvent{
-		Type: canonical.EventThinkingDelta, Text: "Let me think...",
+	state.Apply(codec.StreamEvent{
+		Type: codec.EventThinkingDelta, Text: "Let me think...",
 		ResponseID: "msg_1", Model: "claude-3",
 	})
-	state.Apply(canonical.CanonicalStreamEvent{
-		Type: canonical.EventTextDelta, Text: "Answer",
+	state.Apply(codec.StreamEvent{
+		Type: codec.EventTextDelta, Text: "Answer",
 	})
-	state.Apply(canonical.CanonicalStreamEvent{
-		Type: canonical.EventMessageStop, StopReason: "end_turn",
+	state.Apply(codec.StreamEvent{
+		Type: codec.EventMessageStop, StopReason: "end_turn",
 	})
 
 	resp := state.Finalize()
@@ -98,20 +117,20 @@ func TestStreamAggregation_ThinkingAndText(t *testing.T) {
 
 func TestStreamAggregation_ToolCalls(t *testing.T) {
 	state := &StreamAggregateState{}
-	state.Apply(canonical.CanonicalStreamEvent{
-		Type:       canonical.EventToolCallStart,
+	state.Apply(codec.StreamEvent{
+		Type:       codec.EventToolCallStart,
 		ToolCallID: "call_1", ToolCallName: "get_weather",
 		ResponseID: "msg_1", Model: "gpt-4o",
 	})
-	state.Apply(canonical.CanonicalStreamEvent{
-		Type: canonical.EventToolCallDelta, ArgumentsDelta: `{"location":`,
+	state.Apply(codec.StreamEvent{
+		Type: codec.EventToolCallDelta, ArgumentsDelta: `{"location":`,
 	})
-	state.Apply(canonical.CanonicalStreamEvent{
-		Type: canonical.EventToolCallDelta, ArgumentsDelta: `"NYC"}`,
+	state.Apply(codec.StreamEvent{
+		Type: codec.EventToolCallDelta, ArgumentsDelta: `"NYC"}`,
 	})
-	state.Apply(canonical.CanonicalStreamEvent{Type: canonical.EventToolCallEnd})
-	state.Apply(canonical.CanonicalStreamEvent{
-		Type: canonical.EventMessageStop, StopReason: "tool_use",
+	state.Apply(codec.StreamEvent{Type: codec.EventToolCallEnd})
+	state.Apply(codec.StreamEvent{
+		Type: codec.EventMessageStop, StopReason: "tool_use",
 	})
 
 	resp := state.Finalize()
@@ -140,9 +159,9 @@ func TestStreamAggregation_Usage(t *testing.T) {
 	in64 := int64(10)
 	out64 := int64(5)
 	total64 := int64(15)
-	state.Apply(canonical.CanonicalStreamEvent{
-		Type: canonical.EventUsageFinal,
-		Usage: &canonical.CanonicalUsage{
+	state.Apply(codec.StreamEvent{
+		Type: codec.EventUsageFinal,
+		Usage: &codec.Usage{
 			InputTokens: &in64, OutputTokens: &out64, TotalTokens: &total64,
 		},
 	})
@@ -192,41 +211,6 @@ func TestAggregation_OpenAIStreamPipeline(t *testing.T) {
 		t.Errorf("stop_reason = %q", resp.StopReason)
 	}
 	if resp.Usage == nil || *resp.Usage.InputTokens != 5 {
-		t.Errorf("usage = %+v", resp.Usage)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Decode → Aggregate pipeline: simulated Anthropic stream → aggregated response
-// ---------------------------------------------------------------------------
-
-func TestAggregation_AnthropicStreamPipeline(t *testing.T) {
-	pairs := fixtureSSEPairs(t, "anthropic_aggregate_stream.sse")
-
-	dec := codec.NewAnthropicStreamDecoder()
-	state := &StreamAggregateState{}
-	for _, p := range pairs {
-		events, err := dec.DecodeLine(p.event, p.data)
-		if err != nil {
-			t.Fatalf("decode %q: %v", p.event, err)
-		}
-		for _, ev := range events {
-			state.Apply(ev)
-		}
-	}
-
-	resp := state.Finalize()
-	if resp.ID != "msg_1" {
-		t.Errorf("id = %q", resp.ID)
-	}
-	text := resp.Output[0].Content[0]
-	if *text.Text != "Hello World" {
-		t.Errorf("text = %q, want 'Hello World'", *text.Text)
-	}
-	if resp.StopReason != "end_turn" {
-		t.Errorf("stop_reason = %q", resp.StopReason)
-	}
-	if resp.Usage == nil || *resp.Usage.OutputTokens != 10 {
 		t.Errorf("usage = %+v", resp.Usage)
 	}
 }
@@ -295,13 +279,13 @@ func TestAggregation_UsageMerge(t *testing.T) {
 	state := &StreamAggregateState{}
 	in64 := int64(10)
 	out64 := int64(5)
-	state.Apply(canonical.CanonicalStreamEvent{
-		Type:  canonical.EventUsageFinal,
-		Usage: &canonical.CanonicalUsage{InputTokens: &in64},
+	state.Apply(codec.StreamEvent{
+		Type:  codec.EventUsageFinal,
+		Usage: &codec.Usage{InputTokens: &in64},
 	})
-	state.Apply(canonical.CanonicalStreamEvent{
-		Type:  canonical.EventUsageFinal,
-		Usage: &canonical.CanonicalUsage{OutputTokens: &out64},
+	state.Apply(codec.StreamEvent{
+		Type:  codec.EventUsageFinal,
+		Usage: &codec.Usage{OutputTokens: &out64},
 	})
 
 	resp := state.Finalize()

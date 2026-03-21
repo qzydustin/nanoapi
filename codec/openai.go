@@ -4,21 +4,22 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/qzydustin/nanoapi/canonical"
 	"github.com/qzydustin/nanoapi/config"
 )
 
 type openAIOutRequest struct {
-	Model           string           `json:"model"`
-	Messages        []openAIOutMsg   `json:"messages"`
-	Stream          bool             `json:"stream,omitempty"`
-	MaxTokens       *int             `json:"max_completion_tokens,omitempty"`
-	Temperature     *float64         `json:"temperature,omitempty"`
-	TopP            *float64         `json:"top_p,omitempty"`
-	Stop            []string         `json:"stop,omitempty"`
-	Tools           *[]openAIOutTool `json:"tools,omitempty"`
-	ReasoningEffort *string          `json:"reasoning_effort,omitempty"`
-	StreamOptions   *streamOptions   `json:"stream_options,omitempty"`
+	Model           string             `json:"model"`
+	Messages        []openAIOutMsg     `json:"messages"`
+	Stream          bool               `json:"stream,omitempty"`
+	MaxTokens       *int               `json:"max_completion_tokens,omitempty"`
+	Temperature     *float64           `json:"temperature,omitempty"`
+	TopP            *float64           `json:"top_p,omitempty"`
+	Stop            []string           `json:"stop,omitempty"`
+	Tools           *[]openAIOutTool   `json:"tools,omitempty"`
+	ToolChoice      any                `json:"tool_choice,omitempty"`
+	ResponseFormat  any                `json:"response_format,omitempty"`
+	ReasoningEffort *string            `json:"reasoning_effort,omitempty"`
+	StreamOptions   *streamOptions     `json:"stream_options,omitempty"`
 	Features        *openAIOutFeatures `json:"features,omitempty"`
 }
 
@@ -60,9 +61,9 @@ type openAIOutTCFunc struct {
 }
 
 type openAIOutTool struct {
-	Type              string        `json:"type"`
+	Type              string            `json:"type"`
 	Function          openAIOutToolFunc `json:"function,omitempty"`
-	SearchContextSize string        `json:"search_context_size,omitempty"`
+	SearchContextSize string            `json:"search_context_size,omitempty"`
 }
 
 type openAIOutToolFunc struct {
@@ -71,9 +72,8 @@ type openAIOutToolFunc struct {
 	Parameters  any    `json:"parameters,omitempty"`
 }
 
-
 // EncodeOpenAIRequest encodes a canonical request as an OpenAI chat request.
-func EncodeOpenAIRequest(req *canonical.CanonicalRequest, upstreamModel string, stream bool, capability *config.ReasoningCapability, openwebUIWebSearch bool) ([]byte, error) {
+func EncodeOpenAIRequest(req *Request, upstreamModel string, stream bool, capability *config.ReasoningCapability, openwebUIWebSearch bool) ([]byte, error) {
 	out := openAIOutRequest{
 		Model:       upstreamModel,
 		Stream:      stream,
@@ -81,6 +81,13 @@ func EncodeOpenAIRequest(req *canonical.CanonicalRequest, upstreamModel string, 
 		Temperature: req.Params.Temperature,
 		TopP:        req.Params.TopP,
 		Stop:        req.Params.Stop,
+	}
+
+	if req.ToolChoice != nil {
+		out.ToolChoice = encodeOpenAIToolChoice(req.ToolChoice)
+	}
+	if req.Params.ResponseFormat != nil {
+		out.ResponseFormat = encodeOpenAIResponseFormat(req.Params.ResponseFormat)
 	}
 
 	if stream {
@@ -178,7 +185,7 @@ func inferToolsFromHistory(messages []openAIOutMsg) []openAIOutTool {
 }
 
 func buildOpenAIReasoning(
-	r *canonical.CanonicalReasoning,
+	r *Reasoning,
 	capability *config.ReasoningCapability,
 ) (string, bool) {
 	if r == nil {
@@ -201,7 +208,7 @@ func buildOpenAIReasoning(
 	return "", false
 }
 
-func encodeOpenAIMessage(m canonical.CanonicalMessage) []openAIOutMsg {
+func encodeOpenAIMessage(m Message) []openAIOutMsg {
 	var toolCalls []openAIOutTC
 	var contentParts []openAIOutContentPart
 	var toolResults []openAIOutMsg
@@ -246,7 +253,7 @@ func encodeOpenAIMessage(m canonical.CanonicalMessage) []openAIOutMsg {
 			if b.ToolResult != nil {
 				toolResults = append(toolResults, openAIOutMsg{
 					Role:       "tool",
-					Content:    encodeOpenAIToolResultContent(b.ToolResult.Content),
+					Content:    encodeOpenAIToolResultContent(b.ToolResult),
 					ToolCallID: b.ToolResult.ToolCallID,
 				})
 			}
@@ -259,6 +266,10 @@ func encodeOpenAIMessage(m canonical.CanonicalMessage) []openAIOutMsg {
 
 	if m.Role == "tool" {
 		return toolResults
+	}
+
+	if len(contentParts) == 0 && len(toolCalls) == 0 && len(toolResults) == 0 {
+		return nil
 	}
 
 	msg := openAIOutMsg{Role: m.Role}
@@ -295,10 +306,10 @@ func encodeOpenAIMessage(m canonical.CanonicalMessage) []openAIOutMsg {
 	return msgs
 }
 
-func encodeOpenAIToolResultContent(blocks []canonical.CanonicalContentBlock) any {
+func encodeOpenAIToolResultContent(result *ToolResult) any {
 	var parts []openAIOutContentPart
 
-	for _, b := range blocks {
+	for _, b := range result.Content {
 		switch b.Type {
 		case "text":
 			if b.Text != nil {
@@ -328,6 +339,19 @@ func encodeOpenAIToolResultContent(blocks []canonical.CanonicalContentBlock) any
 		}
 	}
 
+	if result.IsError {
+		switch len(parts) {
+		case 0:
+			return "Error:"
+		default:
+			if parts[0].Type == "text" {
+				parts[0].Text = "Error: " + parts[0].Text
+			} else {
+				parts = append([]openAIOutContentPart{{Type: "text", Text: "Error:"}}, parts...)
+			}
+		}
+	}
+
 	switch len(parts) {
 	case 0:
 		return ""
@@ -341,7 +365,55 @@ func encodeOpenAIToolResultContent(blocks []canonical.CanonicalContentBlock) any
 	}
 }
 
-func encodeOpenAIImageURL(img *canonical.CanonicalImage) string {
+func encodeOpenAIToolChoice(choice *ToolChoice) any {
+	switch choice.Type {
+	case "required":
+		return "required"
+	case "tool":
+		if choice.Name == "" {
+			return nil
+		}
+		return map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name": choice.Name,
+			},
+		}
+	default:
+		return "auto"
+	}
+}
+
+func encodeOpenAIResponseFormat(format *ResponseFormat) any {
+	switch format.Type {
+	case "json_object":
+		return map[string]any{"type": "json_object"}
+
+	case "json_schema":
+		if format.Schema == nil {
+			return nil
+		}
+		name := format.Name
+		if name == "" {
+			name = "structured_output"
+		}
+		jsonSchema := map[string]any{
+			"name":   name,
+			"schema": format.Schema,
+		}
+		if format.Strict != nil {
+			jsonSchema["strict"] = *format.Strict
+		}
+		return map[string]any{
+			"type":        "json_schema",
+			"json_schema": jsonSchema,
+		}
+	}
+
+	return nil
+}
+
+func encodeOpenAIImageURL(img *Image) string {
 	switch img.SourceType {
 	case "data_url", "base64":
 		if img.MediaType != nil && img.Data != nil {
@@ -393,11 +465,13 @@ type openAIRespTCFunc struct {
 }
 
 type openAIUsage struct {
-	PromptTokens            int                           `json:"prompt_tokens"`
-	CompletionTokens        int                           `json:"completion_tokens"`
-	TotalTokens             int                           `json:"total_tokens"`
-	PromptTokensDetails     *openAIPromptTokensDetails    `json:"prompt_tokens_details,omitempty"`
-	CompletionTokensDetails *openAICompletionTokensDetail `json:"completion_tokens_details,omitempty"`
+	PromptTokens             int                           `json:"prompt_tokens"`
+	CompletionTokens         int                           `json:"completion_tokens"`
+	TotalTokens              int                           `json:"total_tokens"`
+	CacheCreationInputTokens *int                          `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     *int                          `json:"cache_read_input_tokens,omitempty"`
+	PromptTokensDetails      *openAIPromptTokensDetails    `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails  *openAICompletionTokensDetail `json:"completion_tokens_details,omitempty"`
 }
 
 type openAIPromptTokensDetails struct {
@@ -411,44 +485,43 @@ type openAICompletionTokensDetail struct {
 }
 
 // DecodeOpenAIResponse decodes an OpenAI chat response into canonical form.
-func DecodeOpenAIResponse(body []byte) (*canonical.CanonicalResponse, error) {
+func DecodeOpenAIResponse(body []byte) (*Response, error) {
 	var raw openAIResponse
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("decode openai response: %w", err)
 	}
 
-	resp := &canonical.CanonicalResponse{
-		UpstreamProtocol: canonical.ProtocolOpenAIChat,
-		Model:            raw.Model,
-		ID:               raw.ID,
+	resp := &Response{
+		Model: raw.Model,
+		ID:    raw.ID,
 	}
 
 	if len(raw.Choices) > 0 {
 		c := raw.Choices[0]
-		var blocks []canonical.CanonicalContentBlock
+		var blocks []ContentBlock
 
 		if len(c.Message.ThinkingBlocks) > 0 {
 			for _, tb := range c.Message.ThinkingBlocks {
 				if tb.Type != "thinking" || tb.Thinking == nil || *tb.Thinking == "" {
 					continue
 				}
-				blocks = append(blocks, canonical.CanonicalContentBlock{
+				blocks = append(blocks, ContentBlock{
 					Type: "thinking",
-					Thinking: &canonical.CanonicalThinkingBlock{
+					Thinking: &ThinkingBlock{
 						Text:      tb.Thinking,
 						Signature: tb.Signature,
 					},
 				})
 			}
 		} else if c.Message.ReasoningContent != nil && *c.Message.ReasoningContent != "" {
-			blocks = append(blocks, canonical.CanonicalContentBlock{
+			blocks = append(blocks, ContentBlock{
 				Type:     "thinking",
-				Thinking: &canonical.CanonicalThinkingBlock{Text: c.Message.ReasoningContent},
+				Thinking: &ThinkingBlock{Text: c.Message.ReasoningContent},
 			})
 		}
 
 		if c.Message.Content != nil && *c.Message.Content != "" {
-			blocks = append(blocks, canonical.CanonicalContentBlock{
+			blocks = append(blocks, ContentBlock{
 				Type: "text",
 				Text: c.Message.Content,
 			})
@@ -459,9 +532,9 @@ func DecodeOpenAIResponse(body []byte) (*canonical.CanonicalResponse, error) {
 			if tc.Function.Arguments != "" {
 				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
 			}
-			blocks = append(blocks, canonical.CanonicalContentBlock{
+			blocks = append(blocks, ContentBlock{
 				Type: "tool_call",
-				ToolCall: &canonical.CanonicalToolCall{
+				ToolCall: &ToolCall{
 					ID:        tc.ID,
 					Name:      tc.Function.Name,
 					Arguments: args,
@@ -469,7 +542,7 @@ func DecodeOpenAIResponse(body []byte) (*canonical.CanonicalResponse, error) {
 			})
 		}
 
-		resp.Output = []canonical.CanonicalMessage{
+		resp.Output = []Message{
 			{Role: c.Message.Role, Content: blocks},
 		}
 
@@ -479,25 +552,43 @@ func DecodeOpenAIResponse(body []byte) (*canonical.CanonicalResponse, error) {
 	}
 
 	if raw.Usage != nil {
-		in64 := int64(raw.Usage.PromptTokens)
-		out64 := int64(raw.Usage.CompletionTokens)
-		total64 := int64(raw.Usage.TotalTokens)
-		resp.Usage = &canonical.CanonicalUsage{
-			InputTokens:  &in64,
-			OutputTokens: &out64,
-			TotalTokens:  &total64,
-		}
-		if raw.Usage.CompletionTokensDetails != nil && raw.Usage.CompletionTokensDetails.ReasoningTokens != nil {
-			reasoning64 := int64(*raw.Usage.CompletionTokensDetails.ReasoningTokens)
-			resp.Usage.ReasoningTokens = &reasoning64
-		}
-		if raw.Usage.PromptTokensDetails != nil && raw.Usage.PromptTokensDetails.CachedTokens != nil {
-			cacheRead64 := int64(*raw.Usage.PromptTokensDetails.CachedTokens)
-			resp.Usage.CacheReadTokens = &cacheRead64
-		}
+		resp.Usage = decodeOpenAIUsage(raw.Usage)
 	}
 
 	return resp, nil
+}
+
+func decodeOpenAIUsage(raw *openAIUsage) *Usage {
+	if raw == nil {
+		return nil
+	}
+
+	in64 := int64(raw.PromptTokens)
+	out64 := int64(raw.CompletionTokens)
+	total64 := int64(raw.TotalTokens)
+	usage := &Usage{
+		InputTokens:  &in64,
+		OutputTokens: &out64,
+		TotalTokens:  &total64,
+	}
+
+	if raw.CompletionTokensDetails != nil && raw.CompletionTokensDetails.ReasoningTokens != nil {
+		reasoning64 := int64(*raw.CompletionTokensDetails.ReasoningTokens)
+		usage.ReasoningTokens = &reasoning64
+	}
+	if raw.CacheCreationInputTokens != nil {
+		cacheWrite64 := int64(*raw.CacheCreationInputTokens)
+		usage.CacheWriteTokens = &cacheWrite64
+	}
+	if raw.PromptTokensDetails != nil && raw.PromptTokensDetails.CachedTokens != nil {
+		cacheRead64 := int64(*raw.PromptTokensDetails.CachedTokens)
+		usage.CacheReadTokens = &cacheRead64
+	} else if raw.CacheReadInputTokens != nil {
+		cacheRead64 := int64(*raw.CacheReadInputTokens)
+		usage.CacheReadTokens = &cacheRead64
+	}
+
+	return usage
 }
 
 func normalizeOpenAIStopReason(reason string) string {
@@ -512,119 +603,6 @@ func normalizeOpenAIStopReason(reason string) string {
 		return reason
 	}
 }
-
-type openAIClientResp struct {
-	ID      string               `json:"id"`
-	Object  string               `json:"object"`
-	Model   string               `json:"model"`
-	Choices []openAIClientChoice `json:"choices"`
-	Usage   *openAIClientUsage   `json:"usage,omitempty"`
-}
-
-type openAIClientChoice struct {
-	Index        int             `json:"index"`
-	Message      openAIClientMsg `json:"message"`
-	FinishReason string          `json:"finish_reason"`
-}
-
-type openAIClientMsg struct {
-	Role             string        `json:"role"`
-	Content          *string       `json:"content"`
-	ToolCalls        []openAIOutTC `json:"tool_calls,omitempty"`
-	ReasoningContent *string       `json:"reasoning_content,omitempty"`
-}
-
-type openAIClientUsage struct {
-	PromptTokens            int                           `json:"prompt_tokens"`
-	CompletionTokens        int                           `json:"completion_tokens"`
-	TotalTokens             int                           `json:"total_tokens"`
-	PromptTokensDetails     *openAIPromptTokensDetails    `json:"prompt_tokens_details,omitempty"`
-	CompletionTokensDetails *openAICompletionTokensDetail `json:"completion_tokens_details,omitempty"`
-}
-
-// EncodeOpenAIClientResponse encodes a canonical response for an OpenAI client.
-func EncodeOpenAIClientResponse(resp *canonical.CanonicalResponse) ([]byte, error) {
-	out := openAIClientResp{
-		ID:     resp.ID,
-		Object: "chat.completion",
-		Model:  resp.Model,
-	}
-
-	msg := openAIClientMsg{Role: "assistant"}
-	finishReason := denormalizeOpenAIStopReason(resp.StopReason)
-
-	if len(resp.Output) > 0 {
-		for _, b := range resp.Output[0].Content {
-			switch b.Type {
-			case "text":
-				msg.Content = b.Text
-			case "thinking":
-				if b.Thinking != nil {
-					msg.ReasoningContent = b.Thinking.Text
-				}
-			case "tool_call":
-				if b.ToolCall != nil {
-					argsStr, _ := json.Marshal(b.ToolCall.Arguments)
-					msg.ToolCalls = append(msg.ToolCalls, openAIOutTC{
-						ID:   b.ToolCall.ID,
-						Type: "function",
-						Function: openAIOutTCFunc{
-							Name:      b.ToolCall.Name,
-							Arguments: string(argsStr),
-						},
-					})
-				}
-			}
-		}
-	}
-
-	out.Choices = []openAIClientChoice{
-		{Index: 0, Message: msg, FinishReason: finishReason},
-	}
-
-	if resp.Usage != nil {
-		u := openAIClientUsage{}
-		if resp.Usage.InputTokens != nil {
-			u.PromptTokens = int(*resp.Usage.InputTokens)
-		}
-		if resp.Usage.OutputTokens != nil {
-			u.CompletionTokens = int(*resp.Usage.OutputTokens)
-		}
-		if resp.Usage.TotalTokens != nil {
-			u.TotalTokens = int(*resp.Usage.TotalTokens)
-		} else {
-			u.TotalTokens = u.PromptTokens + u.CompletionTokens
-		}
-		if resp.Usage.CacheReadTokens != nil {
-			u.PromptTokensDetails = &openAIPromptTokensDetails{
-				CachedTokens: intPtr(int(*resp.Usage.CacheReadTokens)),
-			}
-		}
-		if resp.Usage.ReasoningTokens != nil {
-			u.CompletionTokensDetails = &openAICompletionTokensDetail{
-				ReasoningTokens: intPtr(int(*resp.Usage.ReasoningTokens)),
-			}
-		}
-		out.Usage = &u
-	}
-
-	return json.Marshal(out)
-}
-
-func denormalizeOpenAIStopReason(reason string) string {
-	switch reason {
-	case "end_turn":
-		return "stop"
-	case "max_tokens":
-		return "length"
-	case "tool_use":
-		return "tool_calls"
-	default:
-		return reason
-	}
-}
-
-func intPtr(v int) *int { return &v }
 
 func maxUsesToSearchContextSize(maxUses int) string {
 	switch maxUses {

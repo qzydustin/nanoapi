@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/qzydustin/nanoapi/canonical"
 	"github.com/qzydustin/nanoapi/config"
 )
 
@@ -17,15 +16,15 @@ func fp(f float64) *float64 { return &f }
 // ---------------------------------------------------------------------------
 
 func TestEncodeOpenAI_SimpleText(t *testing.T) {
-	req := &canonical.CanonicalRequest{
+	req := &Request{
 		ClientModel: "gpt-4o",
-		System:      []canonical.CanonicalContentBlock{{Type: "text", Text: sp("Be helpful.")}},
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
+		System:      []ContentBlock{{Type: "text", Text: sp("Be helpful.")}},
+		Messages: []Message{
+			{Role: "user", Content: []ContentBlock{
 				{Type: "text", Text: sp("Hello")},
 			}},
 		},
-		Params: canonical.CanonicalParams{
+		Params: Params{
 			MaxTokens:   ip(1024),
 			Temperature: fp(0.5),
 		},
@@ -53,10 +52,10 @@ func TestEncodeOpenAI_SimpleText(t *testing.T) {
 }
 
 func TestEncodeOpenAI_ImageDataURL(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
-				{Type: "image", Image: &canonical.CanonicalImage{
+	req := &Request{
+		Messages: []Message{
+			{Role: "user", Content: []ContentBlock{
+				{Type: "image", Image: &Image{
 					SourceType: "data_url",
 					MediaType:  sp("image/png"),
 					Data:       sp("iVBOR"),
@@ -83,10 +82,10 @@ func TestEncodeOpenAI_ImageDataURL(t *testing.T) {
 }
 
 func TestEncodeOpenAI_ToolCalls(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "assistant", Content: []canonical.CanonicalContentBlock{
-				{Type: "tool_call", ToolCall: &canonical.CanonicalToolCall{
+	req := &Request{
+		Messages: []Message{
+			{Role: "assistant", Content: []ContentBlock{
+				{Type: "tool_call", ToolCall: &ToolCall{
 					ID: "call_1", Name: "get_weather",
 					Arguments: map[string]any{"location": "NYC"},
 				}},
@@ -110,22 +109,22 @@ func TestEncodeOpenAI_ToolCalls(t *testing.T) {
 }
 
 func TestEncodeOpenAI_InfersDummyToolsFromHistory(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "assistant", Content: []canonical.CanonicalContentBlock{
-				{Type: "tool_call", ToolCall: &canonical.CanonicalToolCall{
+	req := &Request{
+		Messages: []Message{
+			{Role: "assistant", Content: []ContentBlock{
+				{Type: "tool_call", ToolCall: &ToolCall{
 					ID: "call_1", Name: "webfetch",
 					Arguments: map[string]any{"url": "https://example.com"},
 				}},
 			}},
-			{Role: "tool", Content: []canonical.CanonicalContentBlock{
-				{Type: "tool_result", ToolResult: &canonical.CanonicalToolResult{
+			{Role: "tool", Content: []ContentBlock{
+				{Type: "tool_result", ToolResult: &ToolResult{
 					ToolCallID: "call_1",
-					Content:    []canonical.CanonicalContentBlock{{Type: "text", Text: sp("ok")}},
+					Content:    []ContentBlock{{Type: "text", Text: sp("ok")}},
 				}},
 			}},
-			{Role: "assistant", Content: []canonical.CanonicalContentBlock{
-				{Type: "tool_call", ToolCall: &canonical.CanonicalToolCall{
+			{Role: "assistant", Content: []ContentBlock{
+				{Type: "tool_call", ToolCall: &ToolCall{
 					ID: "call_2", Name: "webfetch",
 					Arguments: map[string]any{"url": "https://example.org"},
 				}},
@@ -161,9 +160,9 @@ func TestEncodeOpenAI_InfersDummyToolsFromHistory(t *testing.T) {
 }
 
 func TestEncodeOpenAI_NoToolsInferredWithoutHistory(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
+	req := &Request{
+		Messages: []Message{
+			{Role: "user", Content: []ContentBlock{
 				{Type: "text", Text: sp("Hello")},
 			}},
 		},
@@ -182,13 +181,13 @@ func TestEncodeOpenAI_NoToolsInferredWithoutHistory(t *testing.T) {
 }
 
 func TestEncodeOpenAI_ExplicitToolsNotOverriddenByInference(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Tools: []canonical.CanonicalTool{
+	req := &Request{
+		Tools: []Tool{
 			{Name: "calculator", Description: "Does math", InputSchema: map[string]any{"type": "object"}},
 		},
-		Messages: []canonical.CanonicalMessage{
-			{Role: "assistant", Content: []canonical.CanonicalContentBlock{
-				{Type: "tool_call", ToolCall: &canonical.CanonicalToolCall{
+		Messages: []Message{
+			{Role: "assistant", Content: []ContentBlock{
+				{Type: "tool_call", ToolCall: &ToolCall{
 					ID: "call_1", Name: "calculator",
 					Arguments: map[string]any{"expr": "1+1"},
 				}},
@@ -251,150 +250,40 @@ func TestDecodeOpenAIResponse_ToolCalls(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// OpenAI Client Response Encoding
-// ---------------------------------------------------------------------------
+func TestDecodeOpenAIResponse_UsageCacheFields(t *testing.T) {
+	body := []byte(`{
+  "id": "chatcmpl-cache",
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "OK"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 15,
+    "completion_tokens": 4,
+    "total_tokens": 19,
+    "cache_creation_input_tokens": 7,
+    "cache_read_input_tokens": 9
+  }
+}`)
 
-func TestEncodeOpenAIClientResponse(t *testing.T) {
-	in64 := int64(10)
-	out64 := int64(5)
-	total64 := int64(15)
-	cacheRead64 := int64(3)
-	reasoning64 := int64(2)
-	resp := &canonical.CanonicalResponse{
-		ID: "chatcmpl-123", Model: "gpt-4o", StopReason: "end_turn",
-		Output: []canonical.CanonicalMessage{
-			{Role: "assistant", Content: []canonical.CanonicalContentBlock{
-				{Type: "text", Text: sp("Hello!")},
-			}},
-		},
-		Usage: &canonical.CanonicalUsage{
-			InputTokens: &in64, OutputTokens: &out64, TotalTokens: &total64,
-			CacheReadTokens: &cacheRead64, ReasoningTokens: &reasoning64,
-		},
-	}
-
-	body, err := EncodeOpenAIClientResponse(resp)
+	resp, err := DecodeOpenAIResponse(body)
 	if err != nil {
-		t.Fatalf("encode: %v", err)
+		t.Fatalf("decode: %v", err)
 	}
-
-	var raw map[string]any
-	json.Unmarshal(body, &raw)
-	if raw["object"] != "chat.completion" {
-		t.Errorf("object = %v", raw["object"])
+	if resp.Usage == nil {
+		t.Fatal("usage should not be nil")
 	}
-	choices := raw["choices"].([]any)
-	choice := choices[0].(map[string]any)
-	if choice["finish_reason"] != "stop" {
-		t.Errorf("finish_reason = %v", choice["finish_reason"])
+	if resp.Usage.CacheWriteTokens == nil || *resp.Usage.CacheWriteTokens != 7 {
+		t.Fatalf("cache_write_tokens = %+v", resp.Usage)
 	}
-	usage := raw["usage"].(map[string]any)
-	promptDetails := usage["prompt_tokens_details"].(map[string]any)
-	if promptDetails["cached_tokens"] != float64(3) {
-		t.Errorf("cached_tokens = %v", promptDetails["cached_tokens"])
-	}
-	completionDetails := usage["completion_tokens_details"].(map[string]any)
-	if completionDetails["reasoning_tokens"] != float64(2) {
-		t.Errorf("reasoning_tokens = %v", completionDetails["reasoning_tokens"])
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Anthropic Request Encoding
-// ---------------------------------------------------------------------------
-
-func TestEncodeAnthropic_SimpleText(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		System: []canonical.CanonicalContentBlock{{Type: "text", Text: sp("Be helpful.")}},
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
-				{Type: "text", Text: sp("Hello")},
-			}},
-		},
-		Params: canonical.CanonicalParams{MaxTokens: ip(1024)},
-	}
-
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	var raw map[string]any
-	json.Unmarshal(body, &raw)
-	if raw["model"] != "claude-3-7-sonnet-20250219" {
-		t.Errorf("model = %v", raw["model"])
-	}
-	if raw["max_tokens"] != float64(1024) {
-		t.Errorf("max_tokens = %v", raw["max_tokens"])
-	}
-	sys := raw["system"].([]any)
-	if len(sys) != 1 {
-		t.Fatalf("system count = %d", len(sys))
-	}
-}
-
-func TestEncodeAnthropic_Thinking(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
-				{Type: "text", Text: sp("Think about this")},
-			}},
-		},
-		Params: canonical.CanonicalParams{
-			MaxTokens: ip(16000),
-			Reasoning: &canonical.CanonicalReasoning{
-				Mode:         "enabled",
-				BudgetTokens: ip(10000),
-			},
-		},
-	}
-
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	var raw map[string]any
-	json.Unmarshal(body, &raw)
-	thinking := raw["thinking"].(map[string]any)
-	if thinking["type"] != "enabled" {
-		t.Errorf("thinking.type = %v", thinking["type"])
-	}
-	if thinking["budget_tokens"] != float64(10000) {
-		t.Errorf("thinking.budget_tokens = %v", thinking["budget_tokens"])
-	}
-}
-
-func TestEncodeAnthropic_ReasoningEffortEnablesThinking(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
-				{Type: "text", Text: sp("Think about this")},
-			}},
-		},
-		Params: canonical.CanonicalParams{
-			MaxTokens: ip(2048),
-			Reasoning: &canonical.CanonicalReasoning{
-				Effort: sp("high"),
-			},
-		},
-	}
-
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	var raw map[string]any
-	json.Unmarshal(body, &raw)
-	thinking := raw["thinking"].(map[string]any)
-	if thinking["type"] != "adaptive" {
-		t.Errorf("thinking.type = %v", thinking["type"])
-	}
-	outputConfig := raw["output_config"].(map[string]any)
-	if outputConfig["effort"] != "high" {
-		t.Errorf("output_config.effort = %v", outputConfig["effort"])
+	if resp.Usage.CacheReadTokens == nil || *resp.Usage.CacheReadTokens != 9 {
+		t.Fatalf("cache_read_tokens = %+v", resp.Usage)
 	}
 }
 
@@ -407,7 +296,7 @@ func TestDecodeAnthropic_ReasoningEffort(t *testing.T) {
 		"messages": [{"role": "user", "content": "hello"}]
 	}`)
 
-	req, err := canonical.DecodeRequest(canonical.ProtocolAnthropicMessage, body)
+	req, err := DecodeAnthropicRequest(body)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -422,218 +311,9 @@ func TestDecodeAnthropic_ReasoningEffort(t *testing.T) {
 	}
 }
 
-func TestEncodeAnthropic_ReasoningEffortNoneDisablesThinking(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
-				{Type: "text", Text: sp("Do not think")},
-			}},
-		},
-		Params: canonical.CanonicalParams{
-			Reasoning: &canonical.CanonicalReasoning{
-				Effort: sp("none"),
-			},
-		},
-	}
-
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	var raw map[string]any
-	json.Unmarshal(body, &raw)
-	thinking := raw["thinking"].(map[string]any)
-	if thinking["type"] != "disabled" {
-		t.Fatalf("thinking.type = %v", thinking["type"])
-	}
-	if _, ok := raw["output_config"]; ok {
-		t.Fatalf("output_config should be omitted, got %v", raw["output_config"])
-	}
-}
-
-func TestEncodeAnthropic_ReasoningEffortAutoUsesAdaptiveWithoutEffort(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
-				{Type: "text", Text: sp("Auto thinking")},
-			}},
-		},
-		Params: canonical.CanonicalParams{
-			Reasoning: &canonical.CanonicalReasoning{
-				Effort: sp("auto"),
-			},
-		},
-	}
-
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	var raw map[string]any
-	json.Unmarshal(body, &raw)
-	thinking := raw["thinking"].(map[string]any)
-	if thinking["type"] != "adaptive" {
-		t.Fatalf("thinking.type = %v", thinking["type"])
-	}
-	if _, ok := raw["output_config"]; ok {
-		t.Fatalf("output_config should be omitted, got %v", raw["output_config"])
-	}
-}
-
-func TestEncodeAnthropic_ReasoningEffortPreservesBudgetTokens(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
-				{Type: "text", Text: sp("Think about this")},
-			}},
-		},
-		Params: canonical.CanonicalParams{
-			MaxTokens: ip(2048),
-			Reasoning: &canonical.CanonicalReasoning{
-				Effort:       sp("high"),
-				BudgetTokens: ip(1024),
-			},
-		},
-	}
-
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	var raw map[string]any
-	json.Unmarshal(body, &raw)
-	thinking := raw["thinking"].(map[string]any)
-	if thinking["type"] != "adaptive" {
-		t.Fatalf("thinking.type = %v", thinking["type"])
-	}
-	if thinking["budget_tokens"] != float64(1024) {
-		t.Fatalf("thinking.budget_tokens = %v", thinking["budget_tokens"])
-	}
-}
-
-func TestEncodeAnthropic_Base64Image(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
-				{Type: "image", Image: &canonical.CanonicalImage{
-					SourceType: "base64",
-					MediaType:  sp("image/jpeg"),
-					Data:       sp("/9j/4"),
-				}},
-			}},
-		},
-		Params: canonical.CanonicalParams{MaxTokens: ip(1024)},
-	}
-
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	var raw map[string]any
-	json.Unmarshal(body, &raw)
-	msgs := raw["messages"].([]any)
-	msg := msgs[0].(map[string]any)
-	content := msg["content"].([]any)
-	block := content[0].(map[string]any)
-	src := block["source"].(map[string]any)
-	if src["type"] != "base64" {
-		t.Errorf("source.type = %v", src["type"])
-	}
-	if src["media_type"] != "image/jpeg" {
-		t.Errorf("source.media_type = %v", src["media_type"])
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Anthropic Response Decoding
-// ---------------------------------------------------------------------------
-
-func TestDecodeAnthropicResponse_Text(t *testing.T) {
-	resp, err := DecodeAnthropicResponse(fixtureBytes(t, "anthropic_response_text.json"))
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.ID != "msg_123" {
-		t.Errorf("id = %q", resp.ID)
-	}
-	if resp.StopReason != "end_turn" {
-		t.Errorf("stop_reason = %q", resp.StopReason)
-	}
-	if *resp.Usage.InputTokens != 10 {
-		t.Errorf("input_tokens = %d", *resp.Usage.InputTokens)
-	}
-	if resp.Usage.TotalTokens == nil || *resp.Usage.TotalTokens != 15 {
-		t.Errorf("total_tokens = %+v", resp.Usage.TotalTokens)
-	}
-}
-
-func TestDecodeAnthropicResponse_ToolUse(t *testing.T) {
-	resp, err := DecodeAnthropicResponse(fixtureBytes(t, "anthropic_response_tool_use.json"))
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	tc := resp.Output[0].Content[0]
-	if tc.Type != "tool_call" || tc.ToolCall.Name != "f" {
-		t.Errorf("tool_call = %+v", tc)
-	}
-}
-
-func TestDecodeAnthropicResponse_Thinking(t *testing.T) {
-	resp, err := DecodeAnthropicResponse(fixtureBytes(t, "anthropic_response_thinking.json"))
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	blocks := resp.Output[0].Content
-	if len(blocks) != 2 {
-		t.Fatalf("blocks = %d", len(blocks))
-	}
-	if blocks[0].Type != "thinking" {
-		t.Errorf("blocks[0].type = %q", blocks[0].Type)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Cross-protocol round-trip
-// ---------------------------------------------------------------------------
-
-func TestCrossProtocol_OpenAIToAnthropic(t *testing.T) {
-	// Decode an OpenAI request
-	req, err := canonical.DecodeRequest(canonical.ProtocolOpenAIChat, fixtureBytes(t, "cross_openai_request.json"))
-	if err != nil {
-		t.Fatalf("decode openai: %v", err)
-	}
-
-	// Encode as Anthropic request
-	anthBody, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
-	if err != nil {
-		t.Fatalf("encode anthropic: %v", err)
-	}
-
-	var raw map[string]any
-	json.Unmarshal(anthBody, &raw)
-
-	if raw["model"] != "claude-3-7-sonnet-20250219" {
-		t.Errorf("model = %v", raw["model"])
-	}
-	// System should be in top-level system field
-	sys := raw["system"].([]any)
-	if len(sys) != 1 {
-		t.Fatalf("system count = %d", len(sys))
-	}
-	// Messages should only have user message
-	msgs := raw["messages"].([]any)
-	if len(msgs) != 1 {
-		t.Fatalf("messages count = %d, want 1 (user only)", len(msgs))
-	}
-}
-
 func TestCrossProtocol_AnthropicToOpenAI(t *testing.T) {
 	// Decode an Anthropic request
-	req, err := canonical.DecodeRequest(canonical.ProtocolAnthropicMessage, fixtureBytes(t, "cross_anthropic_request.json"))
+	req, err := DecodeAnthropicRequest(fixtureBytes(t, "cross_anthropic_request.json"))
 	if err != nil {
 		t.Fatalf("decode anthropic: %v", err)
 	}
@@ -661,7 +341,7 @@ func TestCrossProtocol_AnthropicToOpenAI(t *testing.T) {
 }
 
 func TestCrossProtocol_AnthropicThinkingToOpenAIReasoning(t *testing.T) {
-	req, err := canonical.DecodeRequest(canonical.ProtocolAnthropicMessage, fixtureBytes(t, "cross_anthropic_thinking_request.json"))
+	req, err := DecodeAnthropicRequest(fixtureBytes(t, "cross_anthropic_thinking_request.json"))
 	if err != nil {
 		t.Fatalf("decode anthropic: %v", err)
 	}
@@ -678,17 +358,125 @@ func TestCrossProtocol_AnthropicThinkingToOpenAIReasoning(t *testing.T) {
 	}
 }
 
+func TestCrossProtocol_AnthropicToolChoiceToOpenAI(t *testing.T) {
+	body := []byte(`{
+		"model": "claude-opus-4-6",
+		"tool_choice": {"type": "any"},
+		"tools": [{
+			"name": "heartbeat",
+			"description": "Report status",
+			"input_schema": {"type": "object"}
+		}],
+		"messages": [{"role": "user", "content": "hello"}]
+	}`)
+
+	req, err := DecodeAnthropicRequest(body)
+	if err != nil {
+		t.Fatalf("decode anthropic: %v", err)
+	}
+
+	openaiBody, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	if err != nil {
+		t.Fatalf("encode openai: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(openaiBody, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if raw["tool_choice"] != "required" {
+		t.Fatalf("tool_choice = %v, want required", raw["tool_choice"])
+	}
+}
+
+func TestCrossProtocol_AnthropicStructuredOutputToOpenAIResponseFormat(t *testing.T) {
+	body := []byte(`{
+		"model": "claude-haiku-4-5",
+		"messages": [{"role": "user", "content": "hello"}],
+		"output_config": {
+			"format": {
+				"type": "json_schema",
+				"schema": {
+					"type": "object",
+					"properties": {"title": {"type": "string"}},
+					"required": ["title"],
+					"additionalProperties": false
+				}
+			}
+		}
+	}`)
+
+	req, err := DecodeAnthropicRequest(body)
+	if err != nil {
+		t.Fatalf("decode anthropic: %v", err)
+	}
+	if req.Params.ResponseFormat == nil {
+		t.Fatal("response_format should not be nil")
+	}
+
+	openaiBody, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	if err != nil {
+		t.Fatalf("encode openai: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(openaiBody, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	responseFormat, ok := raw["response_format"].(map[string]any)
+	if !ok {
+		t.Fatalf("response_format missing or wrong type: %T", raw["response_format"])
+	}
+	if responseFormat["type"] != "json_schema" {
+		t.Fatalf("response_format.type = %v", responseFormat["type"])
+	}
+	jsonSchema, ok := responseFormat["json_schema"].(map[string]any)
+	if !ok {
+		t.Fatalf("response_format.json_schema missing or wrong type: %T", responseFormat["json_schema"])
+	}
+	if jsonSchema["name"] != "structured_output" {
+		t.Fatalf("json_schema.name = %v", jsonSchema["name"])
+	}
+	schema, ok := jsonSchema["schema"].(map[string]any)
+	if !ok {
+		t.Fatalf("json_schema.schema missing or wrong type: %T", jsonSchema["schema"])
+	}
+	if schema["type"] != "object" {
+		t.Fatalf("json_schema.schema.type = %v", schema["type"])
+	}
+}
+
+func TestDecodeAnthropic_DropsUnknownRequestBlocks(t *testing.T) {
+	body := []byte(`{
+		"model": "claude-opus-4-6",
+		"messages": [{
+			"role": "assistant",
+			"content": [{"type": "redacted_thinking", "data": "hidden"}]
+		}]
+	}`)
+
+	req, err := DecodeAnthropicRequest(body)
+	if err != nil {
+		t.Fatalf("decode anthropic: %v", err)
+	}
+	if len(req.Messages) != 0 {
+		t.Fatalf("messages count = %d, want 0", len(req.Messages))
+	}
+}
+
 // ---------------------------------------------------------------------------
 // OpenAI Request Encoding — tool_result
 // ---------------------------------------------------------------------------
 
 func TestEncodeOpenAI_ToolResult(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "tool", Content: []canonical.CanonicalContentBlock{
-				{Type: "tool_result", ToolResult: &canonical.CanonicalToolResult{
+	req := &Request{
+		Messages: []Message{
+			{Role: "tool", Content: []ContentBlock{
+				{Type: "tool_result", ToolResult: &ToolResult{
 					ToolCallID: "call_1",
-					Content:    []canonical.CanonicalContentBlock{{Type: "text", Text: sp("Sunny, 72°F")}},
+					Content:    []ContentBlock{{Type: "text", Text: sp("Sunny, 72°F")}},
 				}},
 			}},
 		},
@@ -717,15 +505,44 @@ func TestEncodeOpenAI_ToolResult(t *testing.T) {
 	}
 }
 
+func TestEncodeOpenAI_ToolResultErrorPrefix(t *testing.T) {
+	req := &Request{
+		Messages: []Message{
+			{Role: "tool", Content: []ContentBlock{
+				{Type: "tool_result", ToolResult: &ToolResult{
+					ToolCallID: "call_1",
+					IsError:    true,
+					Content:    []ContentBlock{{Type: "text", Text: sp("File does not exist")}},
+				}},
+			}},
+		},
+	}
+
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	msgs := raw["messages"].([]any)
+	msg := msgs[0].(map[string]any)
+	if msg["content"] != "Error: File does not exist" {
+		t.Fatalf("content = %v", msg["content"])
+	}
+}
+
 func TestEncodeOpenAI_ToolResultPreservesImageContent(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "tool", Content: []canonical.CanonicalContentBlock{
-				{Type: "tool_result", ToolResult: &canonical.CanonicalToolResult{
+	req := &Request{
+		Messages: []Message{
+			{Role: "tool", Content: []ContentBlock{
+				{Type: "tool_result", ToolResult: &ToolResult{
 					ToolCallID: "call_img",
-					Content: []canonical.CanonicalContentBlock{
+					Content: []ContentBlock{
 						{Type: "text", Text: sp("look at this")},
-						{Type: "image", Image: &canonical.CanonicalImage{
+						{Type: "image", Image: &Image{
 							SourceType: "base64",
 							MediaType:  sp("image/png"),
 							Data:       sp("iVBORw0KGgoAAAANSUhEUg=="),
@@ -764,12 +581,12 @@ func TestEncodeOpenAI_ToolResultPreservesImageContent(t *testing.T) {
 }
 
 func TestEncodeOpenAI_UserToolResultComesBeforeUserText(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
-				{Type: "tool_result", ToolResult: &canonical.CanonicalToolResult{
+	req := &Request{
+		Messages: []Message{
+			{Role: "user", Content: []ContentBlock{
+				{Type: "tool_result", ToolResult: &ToolResult{
 					ToolCallID: "call_1",
-					Content:    []canonical.CanonicalContentBlock{{Type: "text", Text: sp("Sunny, 72°F")}},
+					Content:    []ContentBlock{{Type: "text", Text: sp("Sunny, 72°F")}},
 				}},
 				{Type: "text", Text: sp("What should I wear?")},
 			}},
@@ -806,10 +623,10 @@ func TestEncodeOpenAI_UserToolResultComesBeforeUserText(t *testing.T) {
 }
 
 func TestEncodeOpenAI_AssistantToolCallsIncludeEmptyContent(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "assistant", Content: []canonical.CanonicalContentBlock{
-				{Type: "tool_call", ToolCall: &canonical.CanonicalToolCall{
+	req := &Request{
+		Messages: []Message{
+			{Role: "assistant", Content: []ContentBlock{
+				{Type: "tool_call", ToolCall: &ToolCall{
 					ID: "call_1", Name: "get_weather", Arguments: map[string]any{"city": "Phoenix"},
 				}},
 			}},
@@ -833,15 +650,45 @@ func TestEncodeOpenAI_AssistantToolCallsIncludeEmptyContent(t *testing.T) {
 	}
 }
 
+func TestEncodeOpenAI_SkipsAssistantThinkingOnlyMessage(t *testing.T) {
+	req := &Request{
+		Messages: []Message{
+			{Role: "assistant", Content: []ContentBlock{
+				{Type: "thinking", Thinking: &ThinkingBlock{Text: sp("internal only")}},
+			}},
+			{Role: "user", Content: []ContentBlock{
+				{Type: "text", Text: sp("hello")},
+			}},
+		},
+	}
+
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil, false)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	msgs := raw["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("messages count = %d, want 1", len(msgs))
+	}
+	if msgs[0].(map[string]any)["role"] != "user" {
+		t.Fatalf("role = %v, want user", msgs[0].(map[string]any)["role"])
+	}
+}
+
 // ---------------------------------------------------------------------------
 // OpenAI Request Encoding — image base64 → data_url
 // ---------------------------------------------------------------------------
 
 func TestEncodeOpenAI_ImageBase64ToDataURL(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
-				{Type: "image", Image: &canonical.CanonicalImage{
+	req := &Request{
+		Messages: []Message{
+			{Role: "user", Content: []ContentBlock{
+				{Type: "image", Image: &Image{
 					SourceType: "base64",
 					MediaType:  sp("image/jpeg"),
 					Data:       sp("/9j/4AAQ"),
@@ -872,10 +719,10 @@ func TestEncodeOpenAI_ImageBase64ToDataURL(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEncodeOpenAI_ImageURL(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
-				{Type: "image", Image: &canonical.CanonicalImage{
+	req := &Request{
+		Messages: []Message{
+			{Role: "user", Content: []ContentBlock{
+				{Type: "image", Image: &Image{
 					SourceType: "url",
 					URL:        sp("https://example.com/img.png"),
 				}},
@@ -905,14 +752,14 @@ func TestEncodeOpenAI_ImageURL(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEncodeOpenAI_ReasoningEffort(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
+	req := &Request{
+		Messages: []Message{
+			{Role: "user", Content: []ContentBlock{
 				{Type: "text", Text: sp("Think hard")},
 			}},
 		},
-		Params: canonical.CanonicalParams{
-			Reasoning: &canonical.CanonicalReasoning{
+		Params: Params{
+			Reasoning: &Reasoning{
 				Effort: sp("high"),
 			},
 		},
@@ -931,14 +778,14 @@ func TestEncodeOpenAI_ReasoningEffort(t *testing.T) {
 }
 
 func TestEncodeOpenAI_ReasoningEffortMaxMapsToHigh(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
+	req := &Request{
+		Messages: []Message{
+			{Role: "user", Content: []ContentBlock{
 				{Type: "text", Text: sp("Think harder")},
 			}},
 		},
-		Params: canonical.CanonicalParams{
-			Reasoning: &canonical.CanonicalReasoning{
+		Params: Params{
+			Reasoning: &Reasoning{
 				Effort: sp("max"),
 			},
 		},
@@ -957,14 +804,14 @@ func TestEncodeOpenAI_ReasoningEffortMaxMapsToHigh(t *testing.T) {
 }
 
 func TestEncodeOpenAI_DisabledThinkingOverridesEffortToLowestSupported(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
+	req := &Request{
+		Messages: []Message{
+			{Role: "user", Content: []ContentBlock{
 				{Type: "text", Text: sp("Think less")},
 			}},
 		},
-		Params: canonical.CanonicalParams{
-			Reasoning: &canonical.CanonicalReasoning{
+		Params: Params{
+			Reasoning: &Reasoning{
 				Mode:   "disabled",
 				Effort: sp("high"),
 			},
@@ -985,14 +832,14 @@ func TestEncodeOpenAI_DisabledThinkingOverridesEffortToLowestSupported(t *testin
 }
 
 func TestEncodeOpenAI_DisabledThinkingUsesNoneWhenSupported(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
+	req := &Request{
+		Messages: []Message{
+			{Role: "user", Content: []ContentBlock{
 				{Type: "text", Text: sp("No thinking")},
 			}},
 		},
-		Params: canonical.CanonicalParams{
-			Reasoning: &canonical.CanonicalReasoning{
+		Params: Params{
+			Reasoning: &Reasoning{
 				Mode:   "disabled",
 				Effort: sp("high"),
 			},
@@ -1091,254 +938,6 @@ func TestDecodeOpenAIResponse_ThinkingBlocks(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// OpenAI Client Response Encoding — with tool calls
-// ---------------------------------------------------------------------------
-
-func TestEncodeOpenAIClientResponse_ToolCalls(t *testing.T) {
-	resp := &canonical.CanonicalResponse{
-		ID: "chatcmpl-123", Model: "gpt-4o", StopReason: "tool_use",
-		Output: []canonical.CanonicalMessage{
-			{Role: "assistant", Content: []canonical.CanonicalContentBlock{
-				{Type: "tool_call", ToolCall: &canonical.CanonicalToolCall{
-					ID: "call_1", Name: "get_weather",
-					Arguments: map[string]any{"location": "NYC"},
-				}},
-			}},
-		},
-	}
-
-	body, err := EncodeOpenAIClientResponse(resp)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	var raw map[string]any
-	json.Unmarshal(body, &raw)
-	choices := raw["choices"].([]any)
-	choice := choices[0].(map[string]any)
-	if choice["finish_reason"] != "tool_calls" {
-		t.Errorf("finish_reason = %v, want tool_calls", choice["finish_reason"])
-	}
-	msg := choice["message"].(map[string]any)
-	tcs := msg["tool_calls"].([]any)
-	if len(tcs) != 1 {
-		t.Fatalf("tool_calls = %d", len(tcs))
-	}
-	tc := tcs[0].(map[string]any)
-	if tc["id"] != "call_1" {
-		t.Errorf("tc.id = %v", tc["id"])
-	}
-	fn := tc["function"].(map[string]any)
-	if fn["name"] != "get_weather" {
-		t.Errorf("tc.function.name = %v", fn["name"])
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Anthropic Request Encoding — tool_result
-// ---------------------------------------------------------------------------
-
-func TestEncodeAnthropic_ToolResult(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
-				{Type: "tool_result", ToolResult: &canonical.CanonicalToolResult{
-					ToolCallID: "toolu_1",
-					Content:    []canonical.CanonicalContentBlock{{Type: "text", Text: sp("Sunny, 72°F")}},
-				}},
-			}},
-		},
-		Params: canonical.CanonicalParams{MaxTokens: ip(1024)},
-	}
-
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	var raw map[string]any
-	json.Unmarshal(body, &raw)
-	msgs := raw["messages"].([]any)
-	msg := msgs[0].(map[string]any)
-	content := msg["content"].([]any)
-	block := content[0].(map[string]any)
-	if block["type"] != "tool_result" {
-		t.Errorf("type = %v", block["type"])
-	}
-	if block["tool_use_id"] != "toolu_1" {
-		t.Errorf("tool_use_id = %v", block["tool_use_id"])
-	}
-	if block["content"] != "Sunny, 72°F" {
-		t.Errorf("content = %v", block["content"])
-	}
-}
-
-func TestEncodeAnthropic_ToolResultPreservesImageContent(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
-				{Type: "tool_result", ToolResult: &canonical.CanonicalToolResult{
-					ToolCallID: "toolu_img",
-					Content: []canonical.CanonicalContentBlock{
-						{Type: "text", Text: sp("look at this")},
-						{Type: "image", Image: &canonical.CanonicalImage{
-							SourceType: "base64",
-							MediaType:  sp("image/png"),
-							Data:       sp("iVBORw0KGgoAAAANSUhEUg=="),
-						}},
-					},
-				}},
-			}},
-		},
-		Params: canonical.CanonicalParams{MaxTokens: ip(1024)},
-	}
-
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	var raw map[string]any
-	json.Unmarshal(body, &raw)
-	msgs := raw["messages"].([]any)
-	msg := msgs[0].(map[string]any)
-	content := msg["content"].([]any)
-	block := content[0].(map[string]any)
-	inner := block["content"].([]any)
-	if len(inner) != 2 {
-		t.Fatalf("inner content count = %d, want 2", len(inner))
-	}
-	image := inner[1].(map[string]any)
-	if image["type"] != "image" {
-		t.Fatalf("inner image type = %v", image["type"])
-	}
-	source := image["source"].(map[string]any)
-	if source["type"] != "base64" {
-		t.Fatalf("source.type = %v", source["type"])
-	}
-	if source["media_type"] != "image/png" {
-		t.Fatalf("source.media_type = %v", source["media_type"])
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Anthropic Request Encoding — tool_use
-// ---------------------------------------------------------------------------
-
-func TestEncodeAnthropic_ToolUse(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "assistant", Content: []canonical.CanonicalContentBlock{
-				{Type: "tool_call", ToolCall: &canonical.CanonicalToolCall{
-					ID: "toolu_1", Name: "get_weather",
-					Arguments: map[string]any{"location": "NYC"},
-				}},
-			}},
-		},
-		Params: canonical.CanonicalParams{MaxTokens: ip(1024)},
-	}
-
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	var raw map[string]any
-	json.Unmarshal(body, &raw)
-	msgs := raw["messages"].([]any)
-	msg := msgs[0].(map[string]any)
-	content := msg["content"].([]any)
-	block := content[0].(map[string]any)
-	if block["type"] != "tool_use" {
-		t.Errorf("type = %v", block["type"])
-	}
-	if block["id"] != "toolu_1" {
-		t.Errorf("id = %v", block["id"])
-	}
-	if block["name"] != "get_weather" {
-		t.Errorf("name = %v", block["name"])
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Anthropic Request Encoding — URL image
-// ---------------------------------------------------------------------------
-
-func TestEncodeAnthropic_URLImage(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
-				{Type: "image", Image: &canonical.CanonicalImage{
-					SourceType: "url",
-					URL:        sp("https://example.com/img.png"),
-				}},
-			}},
-		},
-		Params: canonical.CanonicalParams{MaxTokens: ip(1024)},
-	}
-
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	var raw map[string]any
-	json.Unmarshal(body, &raw)
-	msgs := raw["messages"].([]any)
-	msg := msgs[0].(map[string]any)
-	content := msg["content"].([]any)
-	block := content[0].(map[string]any)
-	src := block["source"].(map[string]any)
-	if src["type"] != "url" {
-		t.Errorf("source.type = %v", src["type"])
-	}
-	if src["url"] != "https://example.com/img.png" {
-		t.Errorf("source.url = %v", src["url"])
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Anthropic Request Encoding — data_url image → base64
-// ---------------------------------------------------------------------------
-
-func TestEncodeAnthropic_DataURLImageToBase64(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
-				{Type: "image", Image: &canonical.CanonicalImage{
-					SourceType: "data_url",
-					MediaType:  sp("image/png"),
-					Data:       sp("iVBOR"),
-				}},
-			}},
-		},
-		Params: canonical.CanonicalParams{MaxTokens: ip(1024)},
-	}
-
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	var raw map[string]any
-	json.Unmarshal(body, &raw)
-	msgs := raw["messages"].([]any)
-	msg := msgs[0].(map[string]any)
-	content := msg["content"].([]any)
-	block := content[0].(map[string]any)
-	src := block["source"].(map[string]any)
-	if src["type"] != "base64" {
-		t.Errorf("source.type = %v, want base64", src["type"])
-	}
-	if src["media_type"] != "image/png" {
-		t.Errorf("source.media_type = %v", src["media_type"])
-	}
-	if src["data"] != "iVBOR" {
-		t.Errorf("source.data = %v", src["data"])
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Anthropic Client Response Encoding — thinking + tool_use
 // ---------------------------------------------------------------------------
 
@@ -1347,18 +946,18 @@ func TestEncodeAnthropicClientResponse_ThinkingAndToolUse(t *testing.T) {
 	out64 := int64(20)
 	cacheCreate64 := int64(4)
 	cacheRead64 := int64(6)
-	resp := &canonical.CanonicalResponse{
+	resp := &Response{
 		ID: "msg_123", Model: "claude-3-7-sonnet-20250219", StopReason: "tool_use",
-		Output: []canonical.CanonicalMessage{
-			{Role: "assistant", Content: []canonical.CanonicalContentBlock{
-				{Type: "thinking", Thinking: &canonical.CanonicalThinkingBlock{Text: sp("Let me think..."), Signature: sp("sig_123")}},
-				{Type: "tool_call", ToolCall: &canonical.CanonicalToolCall{
+		Output: []Message{
+			{Role: "assistant", Content: []ContentBlock{
+				{Type: "thinking", Thinking: &ThinkingBlock{Text: sp("Let me think..."), Signature: sp("sig_123")}},
+				{Type: "tool_call", ToolCall: &ToolCall{
 					ID: "toolu_1", Name: "get_weather",
 					Arguments: map[string]any{"location": "NYC"},
 				}},
 			}},
 		},
-		Usage: &canonical.CanonicalUsage{
+		Usage: &Usage{
 			InputTokens: &in64, OutputTokens: &out64,
 			CacheWriteTokens: &cacheCreate64, CacheReadTokens: &cacheRead64,
 		},
@@ -1376,6 +975,11 @@ func TestEncodeAnthropicClientResponse_ThinkingAndToolUse(t *testing.T) {
 	}
 	if raw["stop_reason"] != "tool_use" {
 		t.Errorf("stop_reason = %v", raw["stop_reason"])
+	}
+	if stopSequence, ok := raw["stop_sequence"]; !ok {
+		t.Errorf("stop_sequence key missing")
+	} else if stopSequence != nil {
+		t.Errorf("stop_sequence = %v, want null", stopSequence)
 	}
 	content := raw["content"].([]any)
 	if len(content) != 2 {
@@ -1402,60 +1006,18 @@ func TestEncodeAnthropicClientResponse_ThinkingAndToolUse(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Anthropic Request Encoding — default max_tokens
-// ---------------------------------------------------------------------------
-
-func TestEncodeAnthropic_DefaultMaxTokens(t *testing.T) {
-	req := &canonical.CanonicalRequest{
-		Messages: []canonical.CanonicalMessage{
-			{Role: "user", Content: []canonical.CanonicalContentBlock{
-				{Type: "text", Text: sp("Hello")},
-			}},
-		},
-		// No MaxTokens set — should default to 4096
+func TestNormalizeAnthropicResponse(t *testing.T) {
+	resp := &Response{
+		ID:    "chatcmpl-123",
+		Model: "us.anthropic.claude-opus-4-6-v1",
 	}
 
-	body, err := EncodeAnthropicRequest(req, "claude-3-7-sonnet-20250219", false, nil)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
+	NormalizeAnthropicResponse(resp, "msg_test123", "claude-opus-4-6")
 
-	var raw map[string]any
-	json.Unmarshal(body, &raw)
-	if raw["max_tokens"] != float64(4096) {
-		t.Errorf("max_tokens = %v, want 4096", raw["max_tokens"])
+	if resp.ID != "msg_test123" {
+		t.Fatalf("id = %q", resp.ID)
 	}
-}
-
-// ---------------------------------------------------------------------------
-// OpenAI Client Response Encoding — reasoning_content
-// ---------------------------------------------------------------------------
-
-func TestEncodeOpenAIClientResponse_ReasoningContent(t *testing.T) {
-	resp := &canonical.CanonicalResponse{
-		ID: "chatcmpl-123", Model: "gpt-4o", StopReason: "end_turn",
-		Output: []canonical.CanonicalMessage{
-			{Role: "assistant", Content: []canonical.CanonicalContentBlock{
-				{Type: "thinking", Thinking: &canonical.CanonicalThinkingBlock{Text: sp("Step by step...")}},
-				{Type: "text", Text: sp("The answer is 42.")},
-			}},
-		},
-	}
-
-	body, err := EncodeOpenAIClientResponse(resp)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-
-	var raw map[string]any
-	json.Unmarshal(body, &raw)
-	choices := raw["choices"].([]any)
-	msg := choices[0].(map[string]any)["message"].(map[string]any)
-	if msg["reasoning_content"] != "Step by step..." {
-		t.Errorf("reasoning_content = %v", msg["reasoning_content"])
-	}
-	if msg["content"] != "The answer is 42." {
-		t.Errorf("content = %v", msg["content"])
+	if resp.Model != "claude-opus-4-6" {
+		t.Fatalf("model = %q", resp.Model)
 	}
 }

@@ -1,5 +1,9 @@
 # Full example covering the main config fields supported by nanoapi.
 # Use config.example.yaml for a smaller starting point.
+#
+# nanoapi proxies Claude Code (Anthropic Messages API) to OpenWebUI
+# (OpenAI-compatible upstream). The client protocol is always Anthropic
+# Messages and the upstream protocol is always OpenAI Chat Completions.
 
 server:
   host: 0.0.0.0
@@ -26,127 +30,40 @@ tokens:
     key: nk_replace_me_too
 
 providers:
-  # The fields below are provider-generic unless noted otherwise:
-  # - name
-  # - protocol
-  # - base_url
-  # - api_key
-  # - priority
-  # - headers
-  # - force_stream
-  # - models
-  # - override.defaults.max_tokens / temperature / top_p / stop
-  #
-  # The protocol-specific part is mainly override.reasoning:
-  # - mode / budget_tokens are Anthropic-oriented
-  # - effort is OpenAI-oriented
+  # Each provider is an OpenAI-compatible upstream (e.g. OpenWebUI).
+  # Multiple providers can serve the same client model with priority-based
+  # fallback: if the highest-priority provider returns 5xx, the next one
+  # is tried automatically.
 
-  # Anthropic-compatible upstream provider.
-  - name: anthropic-main
-    protocol: anthropic_messages
-    base_url: https://api.anthropic.com
-    api_key: your-anthropic-api-key
+  - name: openwebui-primary
+    base_url: https://chat.example.com/api
+    api_key: your-openwebui-jwt-token
     # Higher priority wins when multiple providers support the same client model.
     priority: 100
-    headers:
-      # Static headers forwarded to the upstream request as-is.
-      # nanoapi does not implement special logic for these headers.
-      anthropic-version: "2023-06-01"
-      anthropic-beta: prompt-caching-2024-07-31
     # If true, non-stream client requests may still use upstream streaming internally.
     force_stream: true
+    quirks:
+      # Send web search as OpenWebUI features flag instead of tools.
+      openwebui_websearch: true
     models:
       # client model name -> upstream model config
-      claude-haiku-4-5-20251001:
-        upstream: claude-haiku-4-5-20251001
-        reasoning:
-          allowed_efforts:
-            - low
-            - medium
-            - high
-            - max
       claude-opus-4-6:
-        upstream: claude-opus-4-6
+        upstream: bedrock-claude-4-6-opus
         reasoning:
           allowed_efforts:
             - low
             - medium
             - high
-            - max
-      gpt-4o-mini:
-        upstream: claude-haiku-4-5-20251001
+      claude-haiku-4-5-20251001:
+        upstream: bedrock-claude-4-5-haiku
         reasoning:
           allowed_efforts:
             - low
             - medium
             - high
-            - max
     override:
       defaults:
         # Provider-level parameter overrides applied after provider selection.
-        # max_tokens is a canonical field:
-        # - Anthropic upstream: max_tokens
-        # - OpenAI upstream: max_completion_tokens
-        max_tokens: 4096
-        temperature: 0.7
-        top_p: 0.95
-        stop:
-          - "END"
-          - "STOP"
-        reasoning:
-          # Anthropic-style reasoning / thinking control.
-          # Use `mode: disabled` to explicitly disable thinking for this provider.
-          mode: enabled
-          budget_tokens: 2048
-
-  # OpenAI-compatible upstream provider.
-  # This example also shows ordered override rules on top of provider defaults.
-  - name: openai-main
-    protocol: openai_chat
-    base_url: https://api.openai.com
-    api_key: your-openai-api-key
-    priority: 110
-    headers:
-      OpenAI-Organization: org_replace_me
-    force_stream: false
-    models:
-      gpt-4o-mini:
-        upstream: gpt-4o-mini
-        reasoning:
-          allowed_efforts:
-            - low
-            - medium
-            - high
-      gpt-5.4:
-        upstream: gpt-5.4
-        reasoning:
-          allowed_efforts:
-            - low
-            - medium
-            - high
-      claude-haiku-4-5-20251001:
-        upstream: gpt-5.4
-        reasoning:
-          allowed_efforts:
-            - low
-            - medium
-            - high
-      claude-opus-4-6:
-        upstream: gpt-5.4
-        reasoning:
-          allowed_efforts:
-            - low
-            - medium
-            - high
-      claude-sonnet-4-6:
-        upstream: gpt-5.4
-        reasoning:
-          allowed_efforts:
-            - low
-            - medium
-            - high
-    override:
-      defaults:
         max_tokens: 4096
         reasoning:
           effort: medium
@@ -154,35 +71,19 @@ providers:
         # Rules are evaluated top-to-bottom.
         # If multiple rules match, later ones override earlier ones.
         - target:
-            client_model: gpt-5.4
-          params:
-            reasoning:
-              effort: high
-        - target:
-            client_model: claude-haiku-4-5-20251001
-          params:
-            reasoning:
-              effort: low
-        - target:
-            client_model: claude-sonnet-4-6
-          params:
-            reasoning:
-              effort: medium
-        - target:
             client_model: claude-opus-4-6
           params:
             reasoning:
-              effort: xhigh
+              effort: high
 
-  # Open WebUI upstream with quirks.
-  # - name: openwebui
-  #   protocol: openai_chat
-  #   base_url: https://chat.example.com/api
-  #   api_key: your-key
-  #   priority: 80
+  # Fallback provider example (lower priority).
+  # - name: openwebui-fallback
+  #   base_url: https://backup.example.com/api
+  #   api_key: your-backup-jwt-token
+  #   priority: 50
   #   force_stream: true
   #   quirks:
-  #     openwebui_websearch: true  # send web search as features flag
+  #     openwebui_websearch: true
   #   models:
   #     claude-opus-4-6:
   #       upstream: bedrock-claude-4-6-opus

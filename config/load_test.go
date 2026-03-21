@@ -25,7 +25,6 @@ tokens:
 
 providers:
   - name: anthropic-main
-    protocol: anthropic_messages
     base_url: https://api.anthropic.com
     api_key: anthropic-test-key
     priority: 100
@@ -42,7 +41,6 @@ providers:
           budget_tokens: 4096
 
   - name: openai-main
-    protocol: openai_chat
     base_url: https://api.openai.com
     api_key: openai-test-key
     priority: 90
@@ -94,9 +92,6 @@ func TestLoadConfig(t *testing.T) {
 	if p.Name != "anthropic-main" {
 		t.Errorf("providers[0].name = %q", p.Name)
 	}
-	if p.Protocol != "anthropic_messages" {
-		t.Errorf("providers[0].protocol = %q", p.Protocol)
-	}
 	if p.APIKey != "anthropic-test-key" {
 		t.Errorf("providers[0].api_key = %q", p.APIKey)
 	}
@@ -139,7 +134,6 @@ tokens:
     key: ${TEST_TOKEN_KEY}
 providers:
   - name: p1
-    protocol: openai_chat
     base_url: https://api.openai.com
     api_key: ${TEST_PROVIDER_KEY}
     models:

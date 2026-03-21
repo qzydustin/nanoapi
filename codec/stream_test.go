@@ -3,8 +3,6 @@ package codec
 import (
 	"strings"
 	"testing"
-
-	"github.com/qzydustin/nanoapi/canonical"
 )
 
 // ---------------------------------------------------------------------------
@@ -23,7 +21,7 @@ func TestDecodeOpenAIStream_TextDelta(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("events = %d", len(events))
 	}
-	if events[0].Type != canonical.EventTextDelta {
+	if events[0].Type != EventTextDelta {
 		t.Errorf("type = %q", events[0].Type)
 	}
 	if events[0].Text != "Hello" {
@@ -41,7 +39,7 @@ func TestDecodeOpenAIStream_ToolCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode start: %v", err)
 	}
-	if len(events1) != 1 || events1[0].Type != canonical.EventToolCallStart {
+	if len(events1) != 1 || events1[0].Type != EventToolCallStart {
 		t.Errorf("expected tool_call_start, got %+v", events1)
 	}
 
@@ -51,7 +49,7 @@ func TestDecodeOpenAIStream_ToolCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode delta: %v", err)
 	}
-	if len(events2) != 1 || events2[0].Type != canonical.EventToolCallDelta {
+	if len(events2) != 1 || events2[0].Type != EventToolCallDelta {
 		t.Errorf("expected tool_call_delta, got %+v", events2)
 	}
 	if events2[0].ArgumentsDelta != `{"loc` {
@@ -67,7 +65,7 @@ func TestDecodeOpenAIStream_FinishReason(t *testing.T) {
 	}
 	found := false
 	for _, e := range events {
-		if e.Type == canonical.EventMessageStop {
+		if e.Type == EventMessageStop {
 			found = true
 			if e.StopReason != "end_turn" {
 				t.Errorf("stop_reason = %q", e.StopReason)
@@ -87,7 +85,7 @@ func TestDecodeOpenAIStream_UsageFinal(t *testing.T) {
 	}
 	found := false
 	for _, e := range events {
-		if e.Type == canonical.EventUsageFinal {
+		if e.Type == EventUsageFinal {
 			found = true
 			if *e.Usage.InputTokens != 10 {
 				t.Errorf("input_tokens = %d", *e.Usage.InputTokens)
@@ -108,7 +106,7 @@ func TestDecodeOpenAIStream_UsageFinalWithDetailsObject(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("events = %d", len(events))
 	}
-	if events[0].Type != canonical.EventUsageFinal {
+	if events[0].Type != EventUsageFinal {
 		t.Fatalf("type = %q", events[0].Type)
 	}
 	if events[0].Usage == nil || events[0].Usage.ReasoningTokens == nil || *events[0].Usage.ReasoningTokens != 3 {
@@ -116,6 +114,26 @@ func TestDecodeOpenAIStream_UsageFinalWithDetailsObject(t *testing.T) {
 	}
 	if events[0].Usage.CacheReadTokens == nil || *events[0].Usage.CacheReadTokens != 2 {
 		t.Errorf("cache_read_tokens = %+v", events[0].Usage)
+	}
+}
+
+func TestDecodeOpenAIStream_UsageFinalWithTopLevelCacheFallbacks(t *testing.T) {
+	line := `data: {"id":"chatcmpl-123","model":"gpt-4o","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"cache_creation_input_tokens":7,"cache_read_input_tokens":9}}`
+	events, _, err := DecodeOpenAIStreamLine(line)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %d", len(events))
+	}
+	if events[0].Type != EventUsageFinal {
+		t.Fatalf("type = %q", events[0].Type)
+	}
+	if events[0].Usage == nil || events[0].Usage.CacheWriteTokens == nil || *events[0].Usage.CacheWriteTokens != 7 {
+		t.Fatalf("cache_write_tokens = %+v", events[0].Usage)
+	}
+	if events[0].Usage.CacheReadTokens == nil || *events[0].Usage.CacheReadTokens != 9 {
+		t.Fatalf("cache_read_tokens = %+v", events[0].Usage)
 	}
 }
 
@@ -143,178 +161,13 @@ func TestDecodeOpenAIStream_KeepAlive(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// OpenAI Stream Encoding
-// ---------------------------------------------------------------------------
-
-func TestOpenAIStreamEncoder_TextDelta(t *testing.T) {
-	enc := NewOpenAIStreamEncoder()
-	line := enc.Encode(canonical.CanonicalStreamEvent{
-		Type: canonical.EventTextDelta, Text: "Hello",
-		ResponseID: "chatcmpl-123", Model: "gpt-4o",
-	})
-	if !strings.Contains(line, `"content":"Hello"`) {
-		t.Errorf("line = %q", line)
-	}
-	if !strings.HasPrefix(line, "data: ") {
-		t.Errorf("should start with 'data: '")
-	}
-}
-
-func TestOpenAIStreamEncoder_ThinkingDelta(t *testing.T) {
-	enc := NewOpenAIStreamEncoder()
-	line := enc.Encode(canonical.CanonicalStreamEvent{
-		Type:       canonical.EventThinkingDelta,
-		Text:       "Let me think",
-		ResponseID: "chatcmpl-123",
-		Model:      "gpt-4o",
-	})
-	if !strings.Contains(line, `"reasoning_content":"Let me think"`) {
-		t.Fatalf("line = %q", line)
-	}
-}
-
-func TestOpenAIStreamEncoder_MessageStop(t *testing.T) {
-	enc := NewOpenAIStreamEncoder()
-	line := enc.Encode(canonical.CanonicalStreamEvent{
-		Type:       canonical.EventMessageStop,
-		StopReason: "end_turn",
-		ResponseID: "chatcmpl-123",
-		Model:      "gpt-4o",
-	})
-	if !strings.Contains(line, `"finish_reason":"stop"`) {
-		t.Fatalf("line = %q", line)
-	}
-}
-
-func TestOpenAIStreamEncoder_Done(t *testing.T) {
-	enc := NewOpenAIStreamEncoder()
-	if enc.Done() != "data: [DONE]\n\n" {
-		t.Errorf("done = %q", enc.Done())
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Anthropic Stream Decoding
-// ---------------------------------------------------------------------------
-
-func TestAnthropicStreamDecoder_MessageStart(t *testing.T) {
-	dec := NewAnthropicStreamDecoder()
-	pairs := fixtureSSEPairs(t, "anthropic_stream_message_start.sse")
-	events, err := dec.DecodeLine(pairs[0].Event, pairs[0].Data)
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(events) != 1 {
-		t.Fatalf("events = %d", len(events))
-	}
-	if events[0].ResponseID != "msg_123" {
-		t.Errorf("response_id = %q", events[0].ResponseID)
-	}
-}
-
-func TestAnthropicStreamDecoder_TextDelta(t *testing.T) {
-	dec := NewAnthropicStreamDecoder()
-	pairs := fixtureSSEPairs(t, "anthropic_stream_text_delta.sse")
-	_, _ = dec.DecodeLine(pairs[0].Event, pairs[0].Data)
-	events, err := dec.DecodeLine(pairs[1].Event, pairs[1].Data)
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(events) != 1 || events[0].Type != canonical.EventTextDelta {
-		t.Errorf("events = %+v", events)
-	}
-	if events[0].Text != "Hello" {
-		t.Errorf("text = %q", events[0].Text)
-	}
-}
-
-func TestAnthropicStreamDecoder_ThinkingDelta(t *testing.T) {
-	dec := NewAnthropicStreamDecoder()
-	pairs := fixtureSSEPairs(t, "anthropic_stream_thinking_delta.sse")
-	_, _ = dec.DecodeLine(pairs[0].Event, pairs[0].Data)
-	events, err := dec.DecodeLine(pairs[1].Event, pairs[1].Data)
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(events) != 1 || events[0].Type != canonical.EventThinkingDelta {
-		t.Errorf("events = %+v", events)
-	}
-}
-
-func TestAnthropicStreamDecoder_ToolUse(t *testing.T) {
-	dec := NewAnthropicStreamDecoder()
-	pairs := fixtureSSEPairs(t, "anthropic_stream_tool_use.sse")
-	events1, err := dec.DecodeLine(pairs[0].Event, pairs[0].Data)
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(events1) != 1 || events1[0].Type != canonical.EventToolCallStart {
-		t.Errorf("start events = %+v", events1)
-	}
-
-	// tool_use delta
-	events2, err := dec.DecodeLine(pairs[1].Event, pairs[1].Data)
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(events2) != 1 || events2[0].Type != canonical.EventToolCallDelta {
-		t.Errorf("delta events = %+v", events2)
-	}
-
-	// tool_use stop
-	events3, err := dec.DecodeLine(pairs[2].Event, pairs[2].Data)
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(events3) != 1 || events3[0].Type != canonical.EventToolCallEnd {
-		t.Errorf("stop events = %+v", events3)
-	}
-}
-
-func TestAnthropicStreamDecoder_MessageDelta(t *testing.T) {
-	dec := NewAnthropicStreamDecoder()
-	pairs := fixtureSSEPairs(t, "anthropic_stream_message_delta.sse")
-	events, err := dec.DecodeLine(pairs[0].Event, pairs[0].Data)
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(events) != 2 {
-		t.Fatalf("events = %d", len(events))
-	}
-	if events[0].Type != canonical.EventMessageStop || events[0].StopReason != "end_turn" {
-		t.Errorf("message_stop = %+v", events[0])
-	}
-	if events[1].Type != canonical.EventUsageFinal || *events[1].Usage.OutputTokens != 42 {
-		t.Errorf("usage_final = %+v", events[1])
-	}
-	if events[1].Usage.InputTokens == nil || *events[1].Usage.InputTokens != 12 {
-		t.Errorf("input_tokens = %+v", events[1].Usage)
-	}
-	if events[1].Usage.TotalTokens == nil || *events[1].Usage.TotalTokens != 54 {
-		t.Errorf("total_tokens = %+v", events[1].Usage)
-	}
-}
-
-func TestAnthropicStreamDecoder_Ping(t *testing.T) {
-	dec := NewAnthropicStreamDecoder()
-	pairs := fixtureSSEPairs(t, "anthropic_stream_ping.sse")
-	events, err := dec.DecodeLine(pairs[0].Event, pairs[0].Data)
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(events) != 0 {
-		t.Errorf("ping should produce no events")
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Anthropic Stream Encoding
 // ---------------------------------------------------------------------------
 
 func TestAnthropicStreamEncoder_TextDelta(t *testing.T) {
 	enc := NewAnthropicStreamEncoder()
-	line := enc.Encode(canonical.CanonicalStreamEvent{
-		Type: canonical.EventTextDelta, Text: "Hello",
+	line := enc.Encode(StreamEvent{
+		Type: EventTextDelta, Text: "Hello",
 		ResponseID: "msg_123", Model: "claude-3",
 	})
 	if !strings.Contains(line, "event: message_start") {
@@ -342,9 +195,9 @@ func TestAnthropicStreamEncoder_UsageFinal(t *testing.T) {
 	out64 := int64(5)
 	cacheCreate64 := int64(2)
 	cacheRead64 := int64(3)
-	line := enc.Encode(canonical.CanonicalStreamEvent{
-		Type: canonical.EventUsageFinal,
-		Usage: &canonical.CanonicalUsage{
+	line := enc.Encode(StreamEvent{
+		Type: EventUsageFinal,
+		Usage: &Usage{
 			InputTokens:      &in64,
 			OutputTokens:     &out64,
 			CacheWriteTokens: &cacheCreate64,
@@ -354,8 +207,8 @@ func TestAnthropicStreamEncoder_UsageFinal(t *testing.T) {
 	if line != "" {
 		t.Errorf("usage-only event should wait for stop reason, got %q", line)
 	}
-	line = enc.Encode(canonical.CanonicalStreamEvent{
-		Type: canonical.EventMessageStop, StopReason: "end_turn",
+	line = enc.Encode(StreamEvent{
+		Type: EventMessageStop, StopReason: "end_turn",
 	})
 	if !strings.Contains(line, `"input_tokens":10`) {
 		t.Errorf("line = %q", line)
@@ -371,30 +224,65 @@ func TestAnthropicStreamEncoder_UsageFinal(t *testing.T) {
 	}
 }
 
-func TestOpenAIStreamEncoder_UsageFinalDetails(t *testing.T) {
-	enc := NewOpenAIStreamEncoder()
+func TestAnthropicStreamEncoder_MessageStartUsesKnownUsage(t *testing.T) {
+	enc := NewAnthropicStreamEncoder()
 	in64 := int64(10)
 	out64 := int64(5)
+	cacheCreate64 := int64(2)
 	cacheRead64 := int64(3)
-	reasoning64 := int64(2)
-	line := enc.Encode(canonical.CanonicalStreamEvent{
-		Type:       canonical.EventUsageFinal,
-		ResponseID: "chatcmpl-123",
-		Model:      "gpt-4o",
-		Usage: &canonical.CanonicalUsage{
-			InputTokens:     &in64,
-			OutputTokens:    &out64,
-			CacheReadTokens: &cacheRead64,
-			ReasoningTokens: &reasoning64,
+
+	line := enc.Encode(StreamEvent{
+		Type:       EventUsageFinal,
+		ResponseID: "msg_123",
+		Model:      "claude-3",
+		Usage: &Usage{
+			InputTokens:      &in64,
+			OutputTokens:     &out64,
+			CacheWriteTokens: &cacheCreate64,
+			CacheReadTokens:  &cacheRead64,
 		},
 	})
-	if !strings.Contains(line, `"total_tokens":15`) {
-		t.Errorf("line = %q", line)
+
+	if !strings.Contains(line, "event: message_start") {
+		t.Fatalf("should contain message_start, got %q", line)
 	}
-	if !strings.Contains(line, `"prompt_tokens_details":{"cached_tokens":3}`) {
-		t.Errorf("line = %q", line)
+	if !strings.Contains(line, `"input_tokens":10`) {
+		t.Fatalf("line = %q", line)
 	}
-	if !strings.Contains(line, `"completion_tokens_details":{"reasoning_tokens":2}`) {
-		t.Errorf("line = %q", line)
+	if !strings.Contains(line, `"output_tokens":5`) {
+		t.Fatalf("line = %q", line)
+	}
+	if !strings.Contains(line, `"cache_creation_input_tokens":2`) {
+		t.Fatalf("line = %q", line)
+	}
+	if !strings.Contains(line, `"cache_read_input_tokens":3`) {
+		t.Fatalf("line = %q", line)
+	}
+}
+
+func TestAnthropicStreamEncoder_WebSearchBlocks(t *testing.T) {
+	enc := NewAnthropicStreamEncoder()
+
+	// Emit message_start first using metadata-only text event.
+	_ = enc.Encode(StreamEvent{
+		Type: EventTextDelta, ResponseID: "msg_123", Model: "claude-opus-4-6",
+	})
+
+	var out strings.Builder
+	for _, ev := range SynthesizeWebSearchSSE([]WebSearchResult{
+		{URL: "https://example.com", Title: "Example"},
+	}) {
+		out.WriteString(enc.Encode(ev))
+	}
+
+	s := out.String()
+	if !strings.Contains(s, `"type":"server_tool_use"`) {
+		t.Fatalf("missing server_tool_use block: %q", s)
+	}
+	if !strings.Contains(s, `"type":"web_search_tool_result"`) {
+		t.Fatalf("missing web_search_tool_result block: %q", s)
+	}
+	if !strings.Contains(s, `"url":"https://example.com"`) {
+		t.Fatalf("missing search result url: %q", s)
 	}
 }

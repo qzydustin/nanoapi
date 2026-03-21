@@ -5,10 +5,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/qzydustin/nanoapi/canonical"
 	"github.com/qzydustin/nanoapi/config"
 	"github.com/qzydustin/nanoapi/execute"
-	"github.com/qzydustin/nanoapi/provider"
 	"github.com/qzydustin/nanoapi/token"
 	"github.com/qzydustin/nanoapi/usage"
 )
@@ -17,7 +15,7 @@ import (
 func NewRouter(
 	tokenSvc *token.Service,
 	usageSvc *usage.Service,
-	selector *provider.Selector,
+	selector *Selector,
 	executor *execute.Executor,
 	logCfg config.LoggingConfig,
 	serverCfg config.ServerConfig,
@@ -43,10 +41,9 @@ func NewRouter(
 	proxy := r.Group("")
 	proxy.Use(TokenAuthMiddleware(tokenSvc))
 	{
-		proxy.POST("/v1/chat/completions",
-			ProxyHandler(canonical.ProtocolOpenAIChat, selector, executor, usageSvc, logCfg, upstreamTimeout, maxBodyBytes))
 		proxy.POST("/v1/messages",
-			ProxyHandler(canonical.ProtocolAnthropicMessage, selector, executor, usageSvc, logCfg, upstreamTimeout, maxBodyBytes))
+			ProxyHandler(selector, executor, usageSvc, logCfg, upstreamTimeout, maxBodyBytes),
+		)
 	}
 
 	// Gateway-owned API endpoints — token self-query.

@@ -28,7 +28,6 @@ func validConfig() *Config {
 		Providers: []ProviderConfig{
 			{
 				Name:     "p1",
-				Protocol: "openai_chat",
 				BaseURL:  "https://api.openai.com",
 				APIKey:   "openai-test-key",
 				Priority: 100,
@@ -36,7 +35,6 @@ func validConfig() *Config {
 			},
 			{
 				Name:     "p2",
-				Protocol: "anthropic_messages",
 				BaseURL:  "https://api.anthropic.com",
 				APIKey:   "anthropic-test-key",
 				Priority: 90,
@@ -120,7 +118,6 @@ func TestValidate_ProviderErrors(t *testing.T) {
 	}{
 		{"no providers", func(c *Config) { c.Providers = nil }, "at least one provider"},
 		{"empty name", func(c *Config) { c.Providers[0].Name = "" }, "name must not be empty"},
-		{"bad protocol", func(c *Config) { c.Providers[0].Protocol = "grpc" }, "protocol must be"},
 		{"empty base_url", func(c *Config) { c.Providers[0].BaseURL = "" }, "base_url"},
 		{"missing api key", func(c *Config) { c.Providers[0].APIKey = "" }, "api_key must not be empty"},
 		{"empty models", func(c *Config) { c.Providers[0].Models = nil }, "models must not be empty"},

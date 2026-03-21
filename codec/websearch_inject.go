@@ -4,30 +4,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
-
-	"github.com/qzydustin/nanoapi/canonical"
 )
 
 func webSearchToolID() string {
 	return fmt.Sprintf("srvtoolu_%016x", rand.Uint64())
 }
 
-func webSearchRawBlocks(id string, results []WebSearchResult) (json.RawMessage, json.RawMessage) {
-	toolUse, _ := json.Marshal(map[string]any{
-		"type": "server_tool_use", "id": id, "name": "web_search", "input": map[string]any{},
-	})
-
-	content := make([]any, len(results))
-	for i, r := range results {
-		content[i] = map[string]any{
-			"type": "web_search_result", "url": r.URL, "title": r.Title,
-			"encrypted_content": "", "page_age": nil,
-		}
+func newWebSearchSynthetic(toolUseID string, results []WebSearchResult) (*ServerToolUse, *WebSearchToolResult) {
+	clonedResults := append([]WebSearchResult(nil), results...)
+	serverToolUse := &ServerToolUse{
+		ID:    toolUseID,
+		Name:  "web_search",
+		Input: map[string]any{},
 	}
-	toolResult, _ := json.Marshal(map[string]any{
-		"type": "web_search_tool_result", "tool_use_id": id, "content": content,
-	})
-	return toolUse, toolResult
+	searchResult := &WebSearchToolResult{
+		ToolUseID: toolUseID,
+		Content:   clonedResults,
+	}
+	return serverToolUse, searchResult
 }
 
 // WebSearchResult holds a URL and title extracted from search results.
@@ -85,26 +79,32 @@ func ParseOpenWebUISources(data string) []WebSearchResult {
 
 // SynthesizeWebSearchBlocks returns synthetic server_tool_use and
 // web_search_tool_result blocks for non-streaming Anthropic responses.
-func SynthesizeWebSearchBlocks(results []WebSearchResult) (canonical.CanonicalContentBlock, canonical.CanonicalContentBlock) {
-	toolUse, toolResult := webSearchRawBlocks(webSearchToolID(), results)
-	return canonical.CanonicalContentBlock{Type: "server_tool_use", RawJSON: toolUse},
-		canonical.CanonicalContentBlock{Type: "web_search_tool_result", RawJSON: toolResult}
+func SynthesizeWebSearchBlocks(results []WebSearchResult) (ContentBlock, ContentBlock) {
+	serverToolUse, searchResult := newWebSearchSynthetic(webSearchToolID(), results)
+	toolUseBlock := ContentBlock{
+		Type:          "server_tool_use",
+		ServerToolUse: serverToolUse,
+	}
+	searchResultBlock := ContentBlock{
+		Type:                "web_search_tool_result",
+		WebSearchToolResult: searchResult,
+	}
+	return toolUseBlock, searchResultBlock
 }
 
 // SynthesizeWebSearchSSE returns canonical stream events for synthetic web
 // search blocks. Feed these through the encoder for correct index tracking.
-func SynthesizeWebSearchSSE(results []WebSearchResult) []canonical.CanonicalStreamEvent {
-	toolUse, toolResult := webSearchRawBlocks(webSearchToolID(), results)
+func SynthesizeWebSearchSSE(results []WebSearchResult) []StreamEvent {
+	serverToolUse, searchResult := newWebSearchSynthetic(webSearchToolID(), results)
 
-	wrapBlock := func(block json.RawMessage) json.RawMessage {
-		data, _ := json.Marshal(map[string]any{"content_block": json.RawMessage(block)})
-		return data
-	}
-
-	return []canonical.CanonicalStreamEvent{
-		{Type: canonical.EventRawBlockStart, RawJSON: wrapBlock(toolUse)},
-		{Type: canonical.EventRawBlockStop},
-		{Type: canonical.EventRawBlockStart, RawJSON: wrapBlock(toolResult)},
-		{Type: canonical.EventRawBlockStop},
+	return []StreamEvent{
+		{
+			Type:          EventServerToolUse,
+			ServerToolUse: serverToolUse,
+		},
+		{
+			Type:                EventWebSearchResult,
+			WebSearchToolResult: searchResult,
+		},
 	}
 }
