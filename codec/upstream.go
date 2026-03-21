@@ -243,12 +243,8 @@ func encodeOpenAIMessage(m Message) []openAIOutMsg {
 					ToolCallID: b.ToolResult.ToolCallID,
 				})
 			}
-		case "thinking":
-			// OpenAI requests do not carry canonical thinking blocks.
 		}
 	}
-
-	var msgs []openAIOutMsg
 
 	if m.Role == "tool" {
 		return toolResults
@@ -258,6 +254,7 @@ func encodeOpenAIMessage(m Message) []openAIOutMsg {
 		return nil
 	}
 
+	var msgs []openAIOutMsg
 	msg := openAIOutMsg{Role: m.Role}
 	if len(toolCalls) > 0 {
 		msg.ToolCalls = toolCalls
@@ -315,15 +312,13 @@ func encodeOpenAIToolResultContent(result *ToolResult) any {
 	}
 
 	if result.IsError {
-		switch len(parts) {
-		case 0:
+		if len(parts) == 0 {
 			return "Error:"
-		default:
-			if parts[0].Type == "text" {
-				parts[0].Text = "Error: " + parts[0].Text
-			} else {
-				parts = append([]openAIOutContentPart{{Type: "text", Text: "Error:"}}, parts...)
-			}
+		}
+		if parts[0].Type == "text" {
+			parts[0].Text = "Error: " + parts[0].Text
+		} else {
+			parts = append([]openAIOutContentPart{{Type: "text", Text: "Error:"}}, parts...)
 		}
 	}
 

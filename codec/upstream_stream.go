@@ -6,10 +6,6 @@ import (
 	"strings"
 )
 
-// ---------------------------------------------------------------------------
-// OpenAI Stream Chunk Decoding
-// ---------------------------------------------------------------------------
-
 type openAIStreamChunk struct {
 	ID      string               `json:"id"`
 	Model   string               `json:"model"`
@@ -60,10 +56,12 @@ func DecodeOpenAIStreamLine(line string) ([]StreamEvent, bool, error) {
 		return nil, true, nil
 	}
 
+	dataBytes := []byte(data)
+
 	var chunk openAIStreamChunk
-	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+	if err := json.Unmarshal(dataBytes, &chunk); err != nil {
 		// Non-OpenAI JSON (e.g. OpenWebUI sources); skip.
-		if json.Valid([]byte(data)) {
+		if json.Valid(dataBytes) {
 			return nil, false, nil
 		}
 		return nil, false, fmt.Errorf("decode openai stream chunk: %w", err)
@@ -71,17 +69,10 @@ func DecodeOpenAIStreamLine(line string) ([]StreamEvent, bool, error) {
 
 	var events []StreamEvent
 
-	// Metadata from first chunk.
-	if chunk.ID != "" || chunk.Model != "" {
-		// We embed metadata in every event; the consumer picks the first one.
-		// This is simpler than a separate metadata event for V1.
-	}
-
 	if len(chunk.Choices) > 0 {
 		c := chunk.Choices[0]
 		d := c.Delta
 
-		// Thinking/reasoning delta
 		if d.ReasoningContent != nil && *d.ReasoningContent != "" {
 			events = append(events, StreamEvent{
 				Type:       EventThinkingDelta,
@@ -101,7 +92,6 @@ func DecodeOpenAIStreamLine(line string) ([]StreamEvent, bool, error) {
 			}
 		}
 
-		// Text delta
 		if d.Content != nil && *d.Content != "" {
 			events = append(events, StreamEvent{
 				Type:       EventTextDelta,
@@ -111,10 +101,8 @@ func DecodeOpenAIStreamLine(line string) ([]StreamEvent, bool, error) {
 			})
 		}
 
-		// Tool call deltas
 		for _, tc := range d.ToolCalls {
 			if tc.ID != "" {
-				// tool_call_start
 				events = append(events, StreamEvent{
 					Type:         EventToolCallStart,
 					ToolCallID:   tc.ID,
@@ -133,7 +121,6 @@ func DecodeOpenAIStreamLine(line string) ([]StreamEvent, bool, error) {
 			}
 		}
 
-		// Finish reason
 		if c.FinishReason != nil && *c.FinishReason != "" {
 			events = append(events, StreamEvent{
 				Type:       EventMessageStop,

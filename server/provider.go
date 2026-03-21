@@ -50,12 +50,11 @@ func (s *Selector) SelectAll(req *codec.Request) ([]*ProviderSelection, error) {
 	var selections []*ProviderSelection
 	for _, p := range candidates {
 		target := p.Models[clientModel]
-		upstreamModel := target.Upstream
 
 		selections = append(selections, &ProviderSelection{
 			Provider:      p,
 			Target:        &target,
-			UpstreamModel: upstreamModel,
+			UpstreamModel: target.Upstream,
 			ForceStream:   p.ForceStream,
 			Override:      resolveOverride(req, p.Override),
 		})

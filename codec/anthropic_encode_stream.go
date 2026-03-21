@@ -165,15 +165,16 @@ func (e *AnthropicStreamEncoder) ensureBlockStart(lines *[]string, blockType str
 		}
 		e.closeBlock(lines)
 	}
+	var contentBlock map[string]any
+	if blockType == "text" {
+		contentBlock = map[string]any{"type": "text", "text": ""}
+	} else {
+		contentBlock = map[string]any{"type": "thinking", "thinking": ""}
+	}
 	start := map[string]any{
 		"type":          "content_block_start",
 		"index":         e.blockIdx,
-		"content_block": map[string]any{"type": blockType},
-	}
-	if blockType == "text" {
-		start["content_block"] = map[string]any{"type": "text", "text": ""}
-	} else if blockType == "thinking" {
-		start["content_block"] = map[string]any{"type": "thinking", "thinking": ""}
+		"content_block": contentBlock,
 	}
 	*lines = append(*lines, anthropicSSE("content_block_start", start))
 	e.blockOpen = true

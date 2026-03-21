@@ -86,7 +86,6 @@ func Validate(cfg *Config) error {
 				}
 			}
 
-			// Priority ambiguity check.
 			if prev, ok := bestPerModel[clientModel]; ok {
 				if p.Priority == prev.priority {
 					return fmt.Errorf(

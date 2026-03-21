@@ -2,6 +2,7 @@ package execute
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -108,9 +109,8 @@ type ExecutionPlan struct {
 	Mode         ExecutionMode
 	URL          string
 	Headers      map[string]string
-	Body         []byte
-	Stream       bool // actual upstream stream flag
-	HasWebSearch bool // request includes a web_search tool
+	Body   []byte
+	Stream bool // actual upstream stream flag
 }
 
 // ExecutionResult is the outcome of executing an upstream request.
@@ -158,7 +158,7 @@ func NewExecutor() *Executor {
 // execution mode.
 func (e *Executor) Execute(ctx context.Context, plan *ExecutionPlan) (*ExecutionResult, error) {
 	startedAt := time.Now()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, plan.URL, strings.NewReader(string(plan.Body)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, plan.URL, bytes.NewReader(plan.Body))
 	if err != nil {
 		return nil, fmt.Errorf("create upstream request: %w", err)
 	}
@@ -177,7 +177,6 @@ func (e *Executor) Execute(ctx context.Context, plan *ExecutionPlan) (*Execution
 		StartedAt:  startedAt,
 	}
 
-	// For non-2xx responses, read the error body and return.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -254,10 +253,7 @@ func (e *Executor) aggregateStream(body io.Reader, startedAt time.Time) (*codec.
 
 // BuildUpstreamURL constructs the upstream API endpoint URL.
 func BuildUpstreamURL(baseURL string) string {
-	for len(baseURL) > 0 && baseURL[len(baseURL)-1] == '/' {
-		baseURL = baseURL[:len(baseURL)-1]
-	}
-	return baseURL + "/v1/chat/completions"
+	return strings.TrimRight(baseURL, "/") + "/v1/chat/completions"
 }
 
 // BuildHeaders constructs the upstream request headers from provider config.
@@ -270,9 +266,8 @@ func BuildHeaders(provider *config.ProviderConfig, stream bool) map[string]strin
 		headers["Accept"] = "text/event-stream"
 	}
 
-	headers["Authorization"] = fmt.Sprintf("Bearer %s", provider.APIKey)
+	headers["Authorization"] = "Bearer " + provider.APIKey
 
-	// Merge provider-level static headers.
 	for k, v := range provider.Headers {
 		headers[k] = v
 	}

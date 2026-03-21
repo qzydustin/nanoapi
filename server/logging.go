@@ -11,19 +11,9 @@ import (
 	"github.com/qzydustin/nanoapi/config"
 )
 
-type requestLogger struct {
-	requestID string
-	debug     bool
-	file      *os.File
-}
-
-func newRequestLogger(cfg config.LoggingConfig, requestID string) (*requestLogger, error) {
-	logger := &requestLogger{
-		requestID: requestID,
-		debug:     cfg.Debug,
-	}
+func newDebugLog(cfg config.LoggingConfig, requestID string) (*os.File, error) {
 	if !cfg.Debug {
-		return logger, nil
+		return nil, nil
 	}
 
 	if err := os.MkdirAll(cfg.RequestDir, 0o755); err != nil {
@@ -35,37 +25,29 @@ func newRequestLogger(cfg config.LoggingConfig, requestID string) (*requestLogge
 	if err != nil {
 		return nil, fmt.Errorf("open request log file: %w", err)
 	}
-	logger.file = file
-	return logger, nil
+	return file, nil
 }
 
-func (l *requestLogger) Close() error {
-	if l == nil || l.file == nil {
-		return nil
-	}
-	return l.file.Close()
-}
-
-func (l *requestLogger) DebugPath() string {
-	if l == nil || l.file == nil {
+func debugPath(f *os.File) string {
+	if f == nil {
 		return ""
 	}
-	return l.file.Name()
+	return f.Name()
 }
 
-func (l *requestLogger) WriteSection(section string, lines ...string) {
-	if l == nil || l.file == nil {
+func writeSection(f *os.File, section string, lines ...string) {
+	if f == nil {
 		return
 	}
 
-	fmt.Fprintf(l.file, "[%s]\n", section)
+	fmt.Fprintf(f, "[%s]\n", section)
 	for _, line := range lines {
 		if line == "" {
 			continue
 		}
-		fmt.Fprintln(l.file, line)
+		fmt.Fprintln(f, line)
 	}
-	fmt.Fprintln(l.file)
+	fmt.Fprintln(f)
 }
 
 func formatLogLine(event string, parts ...string) string {
@@ -88,24 +70,9 @@ func formatHeadersForDebug(headers http.Header) map[string]string {
 	if len(headers) == 0 {
 		return nil
 	}
-
-	keys := make([]string, 0, len(headers))
-	for key := range headers {
-		keys = append(keys, http.CanonicalHeaderKey(key))
-	}
-	slices.Sort(keys)
-
-	out := make(map[string]string, len(keys))
-	for _, key := range keys {
-		values := headers.Values(key)
-		switch strings.ToLower(key) {
-		case "authorization":
-			if len(values) > 0 {
-				out[key] = redactHeaderValue(values[0])
-			}
-		default:
-			out[key] = strings.Join(values, ", ")
-		}
+	out := make(map[string]string, len(headers))
+	for key, values := range headers {
+		out[key] = strings.Join(values, ", ")
 	}
 	return out
 }

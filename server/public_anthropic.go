@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -91,12 +92,12 @@ func ProxyHandler(
 		requestID := uuid.New().String()
 		tc := getTokenContext(c)
 		var upstreamModel string
-		reqLog, reqLogErr := newRequestLogger(logCfg, requestID)
+		reqLog, reqLogErr := newDebugLog(logCfg, requestID)
 		if reqLogErr != nil {
 			slog.Error(formatLogLine(
 				"error",
 				formatLogKV("req", requestID),
-				formatLogKV("message", fmt.Sprintf("init request log: %v", reqLogErr)),
+				formatLogKV("message", "init request log: "+reqLogErr.Error()),
 			))
 		}
 		if reqLog != nil {
@@ -117,18 +118,18 @@ func ProxyHandler(
 			recordUsage(usageSvc, tc, startTime, "", upstreamModel, false, usageErrorCode(status), nil)
 			return
 		}
-		if reqLog != nil && reqLog.debug {
+		if reqLog != nil {
 			lines := []string{
-				fmt.Sprintf("method: %s", c.Request.Method),
-				fmt.Sprintf("path: %s", c.Request.URL.Path),
+				"method: " + c.Request.Method,
+				"path: " + c.Request.URL.Path,
 			}
 			for k, v := range c.Request.URL.Query() {
-				lines = append(lines, fmt.Sprintf("%s: %s", k, strings.Join(v, ", ")))
+				lines = append(lines, k+": "+strings.Join(v, ", "))
 			}
 			lines = append(lines, formatMapLines(formatHeadersForDebug(c.Request.Header))...)
 			lines = append(lines, "body:")
 			lines = append(lines, string(body))
-			reqLog.WriteSection("client_request_full", lines...)
+			writeSection(reqLog,"client_request_full", lines...)
 		}
 
 		// 2. Decode request.
@@ -148,7 +149,6 @@ func ProxyHandler(
 			return
 		}
 
-		// Save original params so each attempt starts from a clean state.
 		originalParams := req.Params.Clone()
 
 		hasWebSearch := false
@@ -159,7 +159,6 @@ func ProxyHandler(
 			}
 		}
 
-		// Try each provider in priority order; fall back on 5xx / connection errors.
 		var lastStatusCode int
 		var lastErrMsg string
 
@@ -182,7 +181,7 @@ func ProxyHandler(
 			}
 			encodedBody, err = codec.EncodeOpenAIRequest(req, selection.UpstreamModel, upstreamStream, reasoningCapability)
 			if err != nil {
-				respondError(c, http.StatusInternalServerError, fmt.Sprintf("encode request: %v", err))
+				respondError(c, http.StatusInternalServerError, "encode request: "+err.Error())
 				recordUsage(usageSvc, tc, startTime, req.ClientModel, upstreamModel, false, usageErrorCode(http.StatusInternalServerError), nil)
 				return
 			}
@@ -190,22 +189,21 @@ func ProxyHandler(
 
 			// 7. Build execution plan.
 			plan := &execute.ExecutionPlan{
-				Mode:         mode,
-				URL:          execute.BuildUpstreamURL(selection.Provider.BaseURL),
-				Headers:      execute.BuildHeaders(selection.Provider, upstreamStream),
-				Body:         encodedBody,
-				Stream:       upstreamStream,
-				HasWebSearch: hasWebSearch,
+				Mode:    mode,
+				URL:     execute.BuildUpstreamURL(selection.Provider.BaseURL),
+				Headers: execute.BuildHeaders(selection.Provider, upstreamStream),
+				Body:    encodedBody,
+				Stream:  upstreamStream,
 			}
-			if reqLog != nil && reqLog.debug {
+			if reqLog != nil {
 				lines := []string{
-					fmt.Sprintf("method: POST"),
-					fmt.Sprintf("url: %s", plan.URL),
+					"method: POST",
+					"url: " + plan.URL,
 				}
 				lines = append(lines, formatMapLines(plan.Headers)...)
 				lines = append(lines, "body:")
 				lines = append(lines, string(plan.Body))
-				reqLog.WriteSection("upstream_request_full", lines...)
+				writeSection(reqLog,"upstream_request_full", lines...)
 			}
 
 			// 8. Execute.
@@ -230,16 +228,16 @@ func ProxyHandler(
 					formatLogLine("error", append([]string{
 						formatLogKV("req", requestID),
 						formatLogKV("provider", selection.Provider.Name),
-						formatLogKV("upstream", fmt.Sprintf("%s", upstreamModel)),
+						formatLogKV("upstream", upstreamModel),
 						formatLogKV("status", statusCode),
 						formatLogKV("message", truncateForLog(errMsg, 4000)),
 					}, formatStreamStatsKV(streamStats)...)...),
 				)
-				if reqLog != nil && reqLog.debug {
+				if reqLog != nil {
 					lines := []string{fmt.Sprintf("status: %d", statusCode)}
 					lines = append(lines, formatStreamStatsLines(streamStats)...)
 					lines = append(lines, "body:", errMsg)
-					reqLog.WriteSection(
+					writeSection(reqLog,
 						"upstream_response_full",
 						lines...,
 					)
@@ -248,7 +246,6 @@ func ProxyHandler(
 				lastStatusCode = statusCode
 				lastErrMsg = errMsg
 
-				// Retry on 5xx or connection errors (502 from bad gateway).
 				if statusCode >= 500 && i < len(selections)-1 {
 					slog.Info(formatLogLine(
 						"fallback",
@@ -266,7 +263,7 @@ func ProxyHandler(
 			}
 
 			// 9. Route by execution mode.
-			outcome := &handlerOutcome{}
+			var outcome *handlerOutcome
 
 			switch mode {
 			case execute.ModeDirectNonStream, execute.ModeAggregateStream:
@@ -294,14 +291,13 @@ func ProxyHandler(
 					formatLogKV("status", status),
 					formatLogKV("latency_ms", time.Since(startTime).Milliseconds()),
 					formatLogKV("success", success),
-					formatLogKV("debug_file", reqLog.DebugPath()),
+					formatLogKV("debug_file", debugPath(reqLog)),
 				}, formatStreamStatsKV(outcome.StreamStats)...)...,
 			))
 			recordUsage(usageSvc, tc, startTime, req.ClientModel, upstreamModel, success, errCode, outcome.Usage)
 			return
 		}
 
-		// All providers exhausted — respond with the last error.
 		respondError(c, lastStatusCode, lastErrMsg)
 		recordUsage(usageSvc, tc, startTime, "", "", false, usageErrorCode(lastStatusCode), nil)
 	}
@@ -348,7 +344,7 @@ func logAccess(
 	providerName string,
 	upstreamModel string,
 	mode execute.ExecutionMode,
-	reqLog *requestLogger,
+	reqLog *os.File,
 ) {
 	maxTokens := any("-")
 	if req.Params.MaxTokens != nil {
@@ -362,7 +358,7 @@ func logAccess(
 		formatLogKV("stream", req.Stream),
 		formatLogKV("mode", mode),
 		formatLogKV("max_tokens", maxTokens),
-		formatLogKV("debug_file", reqLog.DebugPath()),
+		formatLogKV("debug_file", debugPath(reqLog)),
 	}
 	slog.Info(formatLogLine("access", parts...))
 }
@@ -405,36 +401,34 @@ func logReasoning(
 	))
 }
 
-func handleNonStreamResponse(c *gin.Context, clientModel string, clientResponseID string, hasWebSearch bool, result *execute.ExecutionResult, reqLog *requestLogger) *handlerOutcome {
+func handleNonStreamResponse(c *gin.Context, clientModel string, clientResponseID string, hasWebSearch bool, result *execute.ExecutionResult, reqLog *os.File) *handlerOutcome {
 	var resp *codec.Response
 	var webSearchResults []codec.WebSearchResult
 
 	if result.AggregatedResponse != nil {
-		// Aggregate stream mode.
 		resp = result.AggregatedResponse
 		webSearchResults = result.WebSearchResults
-		if reqLog != nil && reqLog.debug {
+		if reqLog != nil {
 			lines := []string{"mode: aggregate_stream"}
 			lines = append(lines, formatStreamStatsLines(result.StreamStats)...)
-			reqLog.WriteSection("upstream_response_full", lines...)
+			writeSection(reqLog,"upstream_response_full", lines...)
 		}
 	} else {
-		// Direct non-stream mode.
 		var err error
 		resp, err = codec.DecodeOpenAIResponse(result.Body)
 		if err != nil {
-			respondError(c, http.StatusBadGateway, fmt.Sprintf("decode upstream response: %v", err))
+			respondError(c, http.StatusBadGateway, "decode upstream response: "+err.Error())
 			return &handlerOutcome{StreamStats: result.StreamStats}
 		}
 		webSearchResults = codec.ParseOpenWebUISources(string(result.Body))
-		if reqLog != nil && reqLog.debug {
-			reqLog.WriteSection(
+		if reqLog != nil {
+			writeSection(reqLog,
 				"upstream_response_full",
 				fmt.Sprintf("status: %d", result.StatusCode),
 				"headers:",
 			)
-			reqLog.WriteSection("upstream_response_headers", formatMapLines(formatHeadersForDebug(result.Headers))...)
-			reqLog.WriteSection("upstream_response_body", string(result.Body))
+			writeSection(reqLog,"upstream_response_headers", formatMapLines(formatHeadersForDebug(result.Headers))...)
+			writeSection(reqLog,"upstream_response_body", string(result.Body))
 		}
 	}
 
@@ -448,7 +442,7 @@ func handleNonStreamResponse(c *gin.Context, clientModel string, clientResponseI
 
 	clientBody, err := codec.EncodeAnthropicClientResponse(resp)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, fmt.Sprintf("encode client response: %v", err))
+		respondError(c, http.StatusInternalServerError, "encode client response: "+err.Error())
 		return &handlerOutcome{StreamStats: result.StreamStats}
 	}
 
@@ -459,7 +453,7 @@ func handleNonStreamResponse(c *gin.Context, clientModel string, clientResponseI
 	}
 }
 
-func handlePassthroughStream(c *gin.Context, clientModel string, clientResponseID string, hasWebSearch bool, result *execute.ExecutionResult, reqLog *requestLogger) *handlerOutcome {
+func handlePassthroughStream(c *gin.Context, clientModel string, clientResponseID string, hasWebSearch bool, result *execute.ExecutionResult, reqLog *os.File) *handlerOutcome {
 	if result.StreamReader == nil {
 		respondError(c, http.StatusBadGateway, "no stream reader")
 		return &handlerOutcome{}
@@ -488,7 +482,7 @@ func streamOpenAIToClient(
 	clientModel string,
 	clientResponseID string,
 	hasWebSearch bool,
-	reqLog *requestLogger,
+	reqLog *os.File,
 	tracker *execute.StreamStatsTracker,
 ) *handlerOutcome {
 	var usageResult *codec.Usage
@@ -500,8 +494,8 @@ func streamOpenAIToClient(
 	for scanner.Scan() {
 		line := scanner.Text()
 		tracker.ObserveLine(line)
-		if reqLog != nil && reqLog.debug {
-			reqLog.WriteSection("upstream_stream_full", line)
+		if reqLog != nil {
+			writeSection(reqLog,"upstream_stream_full", line)
 		}
 		// Capture OpenWebUI sources before normal decoding.
 		if hasWebSearch && !webSearchInjected && strings.HasPrefix(line, "data: ") {
@@ -512,7 +506,7 @@ func streamOpenAIToClient(
 		}
 		events, done, err := codec.DecodeOpenAIStreamLine(line)
 		if err != nil {
-			slog.Error(formatLogLine("error", formatLogKV("message", fmt.Sprintf("decode upstream stream line: %v", err))))
+			slog.Error(formatLogLine("error", formatLogKV("message", "decode upstream stream line: "+err.Error())))
 			continue
 		}
 		for _, ev := range events {
@@ -554,16 +548,16 @@ func streamOpenAIToClient(
 				formatLogKV("message", fmt.Sprintf("scan upstream stream: %v", err)),
 			}, formatStreamStatsKV(tracker.Snapshot())...)...,
 		))
-		if reqLog != nil && reqLog.debug {
+		if reqLog != nil {
 			lines := []string{fmt.Sprintf("scan_error: %v", err)}
 			lines = append(lines, formatStreamStatsLines(tracker.Snapshot())...)
-			reqLog.WriteSection("upstream_stream_error", lines...)
+			writeSection(reqLog,"upstream_stream_error", lines...)
 		}
 	}
-	if reqLog != nil && reqLog.debug {
+	if reqLog != nil {
 		lines := []string{"mode: passthrough_stream"}
 		lines = append(lines, formatStreamStatsLines(tracker.Snapshot())...)
-		reqLog.WriteSection("upstream_response_full", lines...)
+		writeSection(reqLog,"upstream_response_full", lines...)
 	}
 	return &handlerOutcome{
 		Usage:       usageResult,

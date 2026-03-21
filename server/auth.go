@@ -45,13 +45,13 @@ func (s *TokenService) Authenticate(rawToken string) (*TokenContext, error) {
 func TokenAuthMiddleware(tokenSvc *TokenService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		auth := c.GetHeader("Authorization")
-		raw := ""
-		if strings.HasPrefix(auth, "Bearer ") {
-			raw = strings.TrimPrefix(auth, "Bearer ")
-		} else if strings.HasPrefix(auth, "bearer ") {
-			raw = strings.TrimPrefix(auth, "bearer ")
-		} else if key := c.GetHeader("x-api-key"); key != "" {
-			raw = key
+		var raw string
+		if after, ok := strings.CutPrefix(auth, "Bearer "); ok {
+			raw = after
+		} else if after, ok := strings.CutPrefix(auth, "bearer "); ok {
+			raw = after
+		} else {
+			raw = c.GetHeader("x-api-key")
 		}
 
 		if raw == "" {
