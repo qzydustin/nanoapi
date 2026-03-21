@@ -3,8 +3,7 @@ server:
   port: 8080
 
 storage:
-  driver: sqlite
-  dsn: /app/data/nanoapi.db
+  path: /app/data/usage.jsonl
 
 tokens:
   - id: default

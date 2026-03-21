@@ -1,4 +1,4 @@
-FROM golang:1.26-bookworm AS builder
+FROM golang:1.26-alpine AS builder
 
 WORKDIR /src
 
@@ -10,22 +10,15 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -o /out/nanoapi ./main.go
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -o /out/nanoapi ./main.go
 
-FROM debian:bookworm-slim
+FROM gcr.io/distroless/static-debian12:nonroot
 
 WORKDIR /app
-
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --create-home nanoapi \
-    && mkdir -p /app/data \
-    && chown -R nanoapi:nanoapi /app
 
 COPY --from=builder /out/nanoapi /app/nanoapi
 COPY config.example.yaml /app/config.example.yaml
 
-USER nanoapi
-
 EXPOSE 8080
 
-CMD ["/app/nanoapi", "/app/config.yaml"]
+ENTRYPOINT ["/app/nanoapi", "/app/config.yaml"]

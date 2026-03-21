@@ -18,8 +18,7 @@ func validConfig() *Config {
 			RequestDir: "logs/requests",
 		},
 		Storage: StorageConfig{
-			Driver: "sqlite",
-			DSN:    "./test.db",
+			Path: "./usage.jsonl",
 		},
 		Tokens: []TokenConfig{
 			{ID: "tok_default", Key: "nk_test_token"},
@@ -81,28 +80,14 @@ func TestValidate_ServerErrors(t *testing.T) {
 }
 
 func TestValidate_StorageErrors(t *testing.T) {
-	tests := []struct {
-		name   string
-		mutate func(c *Config)
-		substr string
-	}{
-		{"empty driver", func(c *Config) { c.Storage.Driver = "" }, "storage.driver"},
-		{"unsupported driver", func(c *Config) { c.Storage.Driver = "postgres" }, "storage.driver"},
-		{"empty dsn", func(c *Config) { c.Storage.DSN = "" }, "storage.dsn"},
+	cfg := validConfig()
+	cfg.Storage.Path = ""
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error")
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := validConfig()
-			tt.mutate(cfg)
-			err := Validate(cfg)
-			if err == nil {
-				t.Fatal("expected error")
-			}
-			if !strings.Contains(err.Error(), tt.substr) {
-				t.Errorf("error %q should contain %q", err, tt.substr)
-			}
-		})
+	if !strings.Contains(err.Error(), "storage.path") {
+		t.Errorf("error %q should contain %q", err, "storage.path")
 	}
 }
 

@@ -18,9 +18,7 @@ logging:
   request_dir: /app/data/request-logs
 
 storage:
-  # SQLite is the only supported storage backend at the moment.
-  driver: sqlite
-  dsn: /app/data/nanoapi.db
+  path: /app/data/usage.jsonl
 
 tokens:
   # Static API tokens used for both model access and /api self-query.

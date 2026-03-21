@@ -16,8 +16,7 @@ logging:
   request_dir: ./logs/requests
 
 storage:
-  driver: sqlite
-  dsn: ./test.db
+  path: ./usage.jsonl
 
 tokens:
   - id: default
@@ -79,8 +78,8 @@ func TestLoadConfig(t *testing.T) {
 	if cfg.Logging.RequestDir != "./logs/requests" {
 		t.Errorf("logging.request_dir = %q, want %q", cfg.Logging.RequestDir, "./logs/requests")
 	}
-	if cfg.Storage.Driver != "sqlite" {
-		t.Errorf("storage.driver = %q, want %q", cfg.Storage.Driver, "sqlite")
+	if cfg.Storage.Path != "./usage.jsonl" {
+		t.Errorf("storage.path = %q, want %q", cfg.Storage.Path, "./usage.jsonl")
 	}
 	if len(cfg.Providers) != 2 {
 		t.Fatalf("providers count = %d, want 2", len(cfg.Providers))
@@ -124,8 +123,7 @@ server:
   host: 0.0.0.0
   port: 8080
 storage:
-  driver: sqlite
-  dsn: ./test.db
+  path: ./usage.jsonl
 tokens:
   - id: default
     name: default

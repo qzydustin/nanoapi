@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func newTestEnv(t *testing.T, upstreamHandler http.HandlerFunc) *testEnv {
 	cfg := &config.Config{
 		Server:  config.ServerConfig{Host: "0.0.0.0", Port: 8080},
 		Logging: config.LoggingConfig{RequestDir: t.TempDir()},
-		Storage: config.StorageConfig{Driver: "sqlite", DSN: ":memory:"},
+		Storage: config.StorageConfig{Path: filepath.Join(t.TempDir(), "usage.jsonl")},
 		Tokens: []config.TokenConfig{
 			{ID: "tok_default", Key: "nk_test_token"},
 		},
@@ -61,7 +62,7 @@ func newTestEnv(t *testing.T, upstreamHandler http.HandlerFunc) *testEnv {
 		},
 	}
 
-	usageSvc, err := NewUsageService(cfg.Storage)
+	usageSvc, err := NewUsageService(cfg.Storage.Path)
 	if err != nil {
 		t.Fatal(err)
 	}

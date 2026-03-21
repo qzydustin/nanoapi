@@ -4,11 +4,10 @@ import (
 	"time"
 )
 
-// UsageRecord stores per-request usage data.
 type UsageRecord struct {
-	ID                       string    `json:"id" gorm:"primaryKey"`
-	TokenID                  string    `json:"token_id" gorm:"index"`
-	Timestamp                time.Time `json:"timestamp" gorm:"index"`
+	ID                       string    `json:"id"`
+	TokenID                  string    `json:"token_id"`
+	Timestamp                time.Time `json:"timestamp"`
 	ClientModel              string    `json:"client_model"`
 	UpstreamModel            string    `json:"upstream_model"`
 	InputTokens              int64     `json:"input_tokens"`
@@ -22,7 +21,6 @@ type UsageRecord struct {
 	LatencyMs                *int64    `json:"latency_ms,omitempty"`
 }
 
-// UsageSummary is an aggregated view of usage data.
 type UsageSummary struct {
 	RequestCount             int64 `json:"request_count"`
 	InputTokens              int64 `json:"input_tokens"`

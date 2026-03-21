@@ -17,14 +17,8 @@ func Validate(cfg *Config) error {
 	if strings.TrimSpace(cfg.Logging.RequestDir) == "" {
 		return fmt.Errorf("logging.request_dir must not be empty")
 	}
-	if cfg.Storage.Driver == "" {
-		return fmt.Errorf("storage.driver must not be empty")
-	}
-	if cfg.Storage.Driver != "sqlite" {
-		return fmt.Errorf("storage.driver must be \"sqlite\" (got %q)", cfg.Storage.Driver)
-	}
-	if cfg.Storage.DSN == "" {
-		return fmt.Errorf("storage.dsn must not be empty")
+	if cfg.Storage.Path == "" {
+		return fmt.Errorf("storage.path must not be empty")
 	}
 
 	if len(cfg.Tokens) == 0 {

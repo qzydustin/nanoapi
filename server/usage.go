@@ -1,86 +1,107 @@
 package server
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"sort"
+	"sync"
 	"time"
-
-	"github.com/qzydustin/nanoapi/config"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
-// UsageService provides usage recording and querying.
 type UsageService struct {
-	db *gorm.DB
+	mu      sync.RWMutex
+	records []UsageRecord
+	file    *os.File
 }
 
-// NewUsageService initializes the database and creates a new UsageService.
-func NewUsageService(cfg config.StorageConfig) (*UsageService, error) {
-	db, err := gorm.Open(sqlite.Open(cfg.DSN), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite: %w", err)
-	}
-
-	// Enable WAL mode for better concurrent access.
-	db.Exec("PRAGMA journal_mode=WAL")
-
-	// Auto-migrate usage table.
-	if err := db.AutoMigrate(&UsageRecord{}); err != nil {
-		return nil, fmt.Errorf("migrate usage: %w", err)
-	}
-
-	return &UsageService{db: db}, nil
-}
-
-// RecordUsage persists a usage record. Write failures are logged but not
-// propagated — they must not fail an otherwise successful model request.
-func (s *UsageService) RecordUsage(rec *UsageRecord) {
-	if err := s.db.Create(rec).Error; err != nil {
-		slog.Error("failed to record usage", "error", err, "token_id", rec.TokenID)
-	}
-}
-
-// QueryUsage returns usage records for a token within an optional time range.
-func (s *UsageService) QueryUsage(tokenID string, from, to time.Time) ([]UsageRecord, error) {
+func NewUsageService(path string) (*UsageService, error) {
 	var records []UsageRecord
-	q := s.db.Where("token_id = ?", tokenID)
-	if !from.IsZero() {
-		q = q.Where("timestamp >= ?", from)
+
+	if f, err := os.Open(path); err == nil {
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			var rec UsageRecord
+			if err := json.Unmarshal(scanner.Bytes(), &rec); err != nil {
+				continue // skip malformed lines
+			}
+			records = append(records, rec)
+		}
+		f.Close()
 	}
-	if !to.IsZero() {
-		q = q.Where("timestamp <= ?", to)
+
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("open usage file: %w", err)
 	}
-	if err := q.Order("timestamp DESC").Find(&records).Error; err != nil {
-		return nil, err
-	}
-	return records, nil
+
+	return &UsageService{records: records, file: file}, nil
 }
 
-// SummaryUsage returns an aggregated usage summary.
-func (s *UsageService) SummaryUsage(tokenID string, from, to time.Time) (*UsageSummary, error) {
-	var summary UsageSummary
-	q := s.db.Model(&UsageRecord{}).Where("token_id = ?", tokenID)
-	if !from.IsZero() {
-		q = q.Where("timestamp >= ?", from)
-	}
-	if !to.IsZero() {
-		q = q.Where("timestamp <= ?", to)
-	}
-	err := q.Select(
-		"COUNT(*) as request_count, " +
-			"COALESCE(SUM(input_tokens),0) as input_tokens, " +
-			"COALESCE(SUM(output_tokens),0) as output_tokens, " +
-			"COALESCE(SUM(cache_creation_input_tokens),0) as cache_creation_input_tokens, " +
-			"COALESCE(SUM(cache_read_input_tokens),0) as cache_read_input_tokens, " +
-			"COALESCE(SUM(total_tokens),0) as total_tokens, " +
-			"COALESCE(SUM(reasoning_tokens),0) as reasoning_tokens",
-	).Scan(&summary).Error
+func (s *UsageService) RecordUsage(rec *UsageRecord) {
+	data, err := json.Marshal(rec)
 	if err != nil {
-		return nil, err
+		slog.Error("failed to marshal usage record", "error", err, "token_id", rec.TokenID)
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.records = append(s.records, *rec)
+	if _, err := s.file.Write(append(data, '\n')); err != nil {
+		slog.Error("failed to write usage record", "error", err, "token_id", rec.TokenID)
+	}
+}
+
+func (s *UsageService) QueryUsage(tokenID string, from, to time.Time) ([]UsageRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var results []UsageRecord
+	for _, r := range s.records {
+		if r.TokenID != tokenID {
+			continue
+		}
+		if !from.IsZero() && r.Timestamp.Before(from) {
+			continue
+		}
+		if !to.IsZero() && r.Timestamp.After(to) {
+			continue
+		}
+		results = append(results, r)
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Timestamp.After(results[j].Timestamp)
+	})
+	return results, nil
+}
+
+func (s *UsageService) SummaryUsage(tokenID string, from, to time.Time) (*UsageSummary, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var summary UsageSummary
+	for _, r := range s.records {
+		if r.TokenID != tokenID {
+			continue
+		}
+		if !from.IsZero() && r.Timestamp.Before(from) {
+			continue
+		}
+		if !to.IsZero() && r.Timestamp.After(to) {
+			continue
+		}
+		summary.RequestCount++
+		summary.InputTokens += r.InputTokens
+		summary.OutputTokens += r.OutputTokens
+		summary.CacheCreationInputTokens += r.CacheCreationInputTokens
+		summary.CacheReadInputTokens += r.CacheReadInputTokens
+		summary.TotalTokens += r.TotalTokens
+		summary.ReasoningTokens += r.ReasoningTokens
 	}
 	return &summary, nil
 }

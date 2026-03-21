@@ -32,7 +32,7 @@ func main() {
 	}
 
 	// Initialize services.
-	usageSvc, err := server.NewUsageService(cfg.Storage)
+	usageSvc, err := server.NewUsageService(cfg.Storage.Path)
 	if err != nil {
 		log.Fatalf("failed to initialize usage service: %v", err)
 	}

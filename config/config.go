@@ -52,10 +52,8 @@ type LoggingConfig struct {
 	RequestDir string `yaml:"request_dir"`
 }
 
-// StorageConfig holds persistence backend settings.
 type StorageConfig struct {
-	Driver string `yaml:"driver"`
-	DSN    string `yaml:"dsn"`
+	Path string `yaml:"path"`
 }
 
 // TokenConfig declares one static API token loaded from config.
