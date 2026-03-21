@@ -1,15 +1,16 @@
 # nanoapi
 
-Lightweight gateway that proxies Claude Code (Anthropic Messages API) to OpenWebUI (OpenAI-compatible upstream).
+Lightweight gateway that proxies Anthropic Messages API and OpenAI Chat Completions API to OpenWebUI (OpenAI-compatible upstream).
 
 ## Features
 
-- **Protocol translation** — Anthropic Messages in, OpenAI Chat Completions out. Requests and responses translated bidirectionally.
+- **Protocol translation** — Accepts both Anthropic Messages and OpenAI Chat Completions. Translates to OpenAI format for upstream, translates responses back to the client's protocol.
+- **Dual entry points** — `/v1/messages` for Anthropic clients (Claude Code), `/v1/chat/completions` for OpenAI-compatible clients.
 - **Web search** — Translates Anthropic `web_search` tool to OpenWebUI `features.web_search` flag. Synthesizes `server_tool_use` + `web_search_tool_result` blocks from OpenWebUI `sources` events so Claude Code displays results correctly.
 - **Reasoning / thinking** — Maps Anthropic thinking mode/effort to OpenAI `reasoning_effort`. Effort mapping and allowed values are config-driven. Disabled thinking omits the field so upstream skips thinking entirely.
 - **Model aliasing and fallback** — Map client model names to upstream models. Multiple providers can serve the same model with priority-based fallback on 5xx errors.
 - **Force-stream aggregation** — Stream from upstream even when the client requests non-streaming, then reassemble into a single response.
-- **Usage tracking** — SQLite-backed per-request tracking: tokens, cache, reasoning, latency, status.
+- **Usage tracking** — JSONL-backed per-request tracking: tokens, cache, reasoning, latency, status.
 - **Debug logging** — Optional full request/response packet dump to disk.
 
 ## Endpoints
@@ -17,6 +18,7 @@ Lightweight gateway that proxies Claude Code (Anthropic Messages API) to OpenWeb
 | Path | Description |
 |---|---|
 | `/v1/messages` | Anthropic Messages (Claude Code) |
+| `/v1/chat/completions` | OpenAI Chat Completions |
 | `/api/health` | Health check |
 | `/api/usage` | Per-token usage summary |
 | `/api/logs` | Per-token request logs |

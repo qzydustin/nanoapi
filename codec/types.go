@@ -178,3 +178,27 @@ type StreamEvent struct {
 	ResponseID string
 	Model      string
 }
+
+func NormalizeResponse(resp *Response, clientResponseID, clientModel string) {
+	if resp == nil {
+		return
+	}
+	if clientResponseID != "" {
+		resp.ID = clientResponseID
+	}
+	if clientModel != "" {
+		resp.Model = clientModel
+	}
+}
+
+func NormalizeStreamEvent(event StreamEvent, clientResponseID, clientModel string) StreamEvent {
+	if clientResponseID != "" {
+		event.ResponseID = clientResponseID
+	}
+	if clientModel != "" {
+		event.Model = clientModel
+	}
+	return event
+}
+
+func strPtr(s string) *string { return &s }

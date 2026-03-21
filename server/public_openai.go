@@ -17,68 +17,8 @@ import (
 	"github.com/qzydustin/nanoapi/execute"
 )
 
-func usageErrorCode(status int) *string {
-	code := fmt.Sprintf("http_%d", status)
-	return &code
-}
-
-type handlerOutcome struct {
-	Usage       *codec.Usage
-	StreamStats *execute.StreamStats
-}
-
-func recordUsage(
-	usageSvc *UsageService,
-	tc *TokenContext,
-	startTime time.Time,
-	clientModel, upstreamModel string,
-	success bool,
-	errCode *string,
-	respUsage *codec.Usage,
-) {
-	if tc == nil {
-		return
-	}
-
-	latencyMs := time.Since(startTime).Milliseconds()
-	rec := &UsageRecord{
-		ID:            uuid.New().String(),
-		TokenID:       tc.TokenID,
-		Timestamp:     time.Now(),
-		ClientModel:   clientModel,
-		UpstreamModel: upstreamModel,
-		Success:       success,
-		ErrorCode:     errCode,
-		LatencyMs:     &latencyMs,
-	}
-	if respUsage != nil {
-		if respUsage.InputTokens != nil {
-			rec.InputTokens = *respUsage.InputTokens
-		}
-		if respUsage.OutputTokens != nil {
-			rec.OutputTokens = *respUsage.OutputTokens
-		}
-		if respUsage.CacheWriteTokens != nil {
-			rec.CacheCreationInputTokens = *respUsage.CacheWriteTokens
-		}
-		if respUsage.CacheReadTokens != nil {
-			rec.CacheReadInputTokens = *respUsage.CacheReadTokens
-		}
-		if respUsage.TotalTokens != nil {
-			rec.TotalTokens = *respUsage.TotalTokens
-		} else if respUsage.InputTokens != nil && respUsage.OutputTokens != nil {
-			rec.TotalTokens = *respUsage.InputTokens + *respUsage.OutputTokens
-		}
-		if respUsage.ReasoningTokens != nil {
-			rec.ReasoningTokens = *respUsage.ReasoningTokens
-		}
-	}
-	usageSvc.RecordUsage(rec)
-}
-
-// ProxyHandler returns the main proxy handler for the /v1/messages endpoint.
-// The client protocol is always Anthropic Messages (Claude Code).
-func ProxyHandler(
+// OpenAIProxyHandler returns the proxy handler for the /v1/chat/completions endpoint.
+func OpenAIProxyHandler(
 	selector *Selector,
 	executor *execute.Executor,
 	usageSvc *UsageService,
@@ -113,7 +53,7 @@ func ProxyHandler(
 				status = http.StatusRequestEntityTooLarge
 				msg = "request body too large"
 			}
-			respondError(c, status, msg)
+			respondOpenAIError(c, status, msg)
 			recordUsage(usageSvc, tc, startTime, "", upstreamModel, false, usageErrorCode(status), nil)
 			return
 		}
@@ -132,23 +72,22 @@ func ProxyHandler(
 		}
 
 		// 2. Decode request.
-		req, err := codec.DecodeAnthropicRequest(body)
+		req, err := codec.DecodeOpenAIRequest(body)
 		if err != nil {
-			respondError(c, http.StatusBadRequest, err.Error())
+			respondOpenAIError(c, http.StatusBadRequest, err.Error())
 			recordUsage(usageSvc, tc, startTime, "", upstreamModel, false, usageErrorCode(http.StatusBadRequest), nil)
 			return
 		}
-		clientResponseID := codec.NewAnthropicMessageID()
+		clientResponseID := codec.NewOpenAIResponseID()
 
 		// 3. Select all candidate providers (sorted by priority).
 		selections, err := selector.SelectAll(req)
 		if err != nil {
-			respondError(c, http.StatusNotFound, err.Error())
+			respondOpenAIError(c, http.StatusNotFound, err.Error())
 			recordUsage(usageSvc, tc, startTime, req.ClientModel, upstreamModel, false, usageErrorCode(http.StatusNotFound), nil)
 			return
 		}
 
-		// Save original params so each attempt starts from a clean state.
 		originalParams := req.Params.Clone()
 
 		hasWebSearch := false
@@ -159,7 +98,6 @@ func ProxyHandler(
 			}
 		}
 
-		// Try each provider in priority order; fall back on 5xx / connection errors.
 		var lastStatusCode int
 		var lastErrMsg string
 
@@ -182,7 +120,7 @@ func ProxyHandler(
 			}
 			encodedBody, err = codec.EncodeOpenAIRequest(req, selection.UpstreamModel, upstreamStream, reasoningCapability)
 			if err != nil {
-				respondError(c, http.StatusInternalServerError, fmt.Sprintf("encode request: %v", err))
+				respondOpenAIError(c, http.StatusInternalServerError, fmt.Sprintf("encode request: %v", err))
 				recordUsage(usageSvc, tc, startTime, req.ClientModel, upstreamModel, false, usageErrorCode(http.StatusInternalServerError), nil)
 				return
 			}
@@ -239,16 +177,12 @@ func ProxyHandler(
 					lines := []string{fmt.Sprintf("status: %d", statusCode)}
 					lines = append(lines, formatStreamStatsLines(streamStats)...)
 					lines = append(lines, "body:", errMsg)
-					reqLog.WriteSection(
-						"upstream_response_full",
-						lines...,
-					)
+					reqLog.WriteSection("upstream_response_full", lines...)
 				}
 
 				lastStatusCode = statusCode
 				lastErrMsg = errMsg
 
-				// Retry on 5xx or connection errors (502 from bad gateway).
 				if statusCode >= 500 && i < len(selections)-1 {
 					slog.Info(formatLogLine(
 						"fallback",
@@ -260,7 +194,7 @@ func ProxyHandler(
 					continue
 				}
 
-				respondError(c, statusCode, errMsg)
+				respondOpenAIError(c, statusCode, errMsg)
 				recordUsage(usageSvc, tc, startTime, req.ClientModel, upstreamModel, false, usageErrorCode(statusCode), nil)
 				return
 			}
@@ -270,17 +204,15 @@ func ProxyHandler(
 
 			switch mode {
 			case execute.ModeDirectNonStream, execute.ModeAggregateStream:
-				outcome = handleNonStreamResponse(c, req.ClientModel, clientResponseID, hasWebSearch, result, reqLog)
+				outcome = handleOpenAINonStreamResponse(c, req.ClientModel, clientResponseID, result, reqLog)
 
 			case execute.ModePassthroughStream:
-				outcome = handlePassthroughStream(c, req.ClientModel, clientResponseID, hasWebSearch, result, reqLog)
+				outcome = handleOpenAIPassthroughStream(c, req.ClientModel, clientResponseID, result, reqLog)
 			}
 
-			// Cancel context after response handling (not before), so passthrough
-			// streams can finish reading from the upstream connection.
 			cancel()
 
-			// 10. Record usage (non-fatal).
+			// 10. Record usage.
 			status := c.Writer.Status()
 			success := status > 0 && status < 400
 			var errCode *string
@@ -301,132 +233,28 @@ func ProxyHandler(
 			return
 		}
 
-		// All providers exhausted — respond with the last error.
-		respondError(c, lastStatusCode, lastErrMsg)
+		respondOpenAIError(c, lastStatusCode, lastErrMsg)
 		recordUsage(usageSvc, tc, startTime, "", "", false, usageErrorCode(lastStatusCode), nil)
 	}
 }
 
-func truncateForLog(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "...(truncated)"
-}
-
-func formatStreamStatsKV(stats *execute.StreamStats) []string {
-	if stats == nil {
-		return nil
-	}
-	var parts []string
-	if stats.TTFTMs != nil {
-		parts = append(parts, formatLogKV("ttft_ms", *stats.TTFTMs))
-	}
-	if stats.LastChunkGapMs != nil {
-		parts = append(parts, formatLogKV("last_chunk_gap_ms", *stats.LastChunkGapMs))
-	}
-	return parts
-}
-
-func formatStreamStatsLines(stats *execute.StreamStats) []string {
-	if stats == nil {
-		return nil
-	}
-	var lines []string
-	if stats.TTFTMs != nil {
-		lines = append(lines, fmt.Sprintf("ttft_ms: %d", *stats.TTFTMs))
-	}
-	if stats.LastChunkGapMs != nil {
-		lines = append(lines, fmt.Sprintf("last_chunk_gap_ms: %d", *stats.LastChunkGapMs))
-	}
-	return lines
-}
-
-func logAccess(
-	requestID string,
-	req *codec.Request,
-	providerName string,
-	upstreamModel string,
-	mode execute.ExecutionMode,
-	reqLog *requestLogger,
-) {
-	maxTokens := any("-")
-	if req.Params.MaxTokens != nil {
-		maxTokens = *req.Params.MaxTokens
-	}
-	parts := []string{
-		formatLogKV("req", requestID),
-		formatLogKV("client_model", req.ClientModel),
-		formatLogKV("upstream_model", upstreamModel),
-		formatLogKV("provider", providerName),
-		formatLogKV("stream", req.Stream),
-		formatLogKV("mode", mode),
-		formatLogKV("max_tokens", maxTokens),
-		formatLogKV("debug_file", reqLog.DebugPath()),
-	}
-	slog.Info(formatLogLine("access", parts...))
-}
-
-func logReasoning(
-	requestID string,
-	req *codec.Request,
-	capability *config.ReasoningCapability,
-) {
-	if req.Params.Reasoning == nil {
-		return
-	}
-
-	inMode := req.Params.Reasoning.Mode
-	if inMode == "" {
-		inMode = "-"
-	}
-	inEffort := "-"
-	if req.Params.Reasoning.Effort != nil {
-		inEffort = *req.Params.Reasoning.Effort
-	}
-	if inEffort == "" {
-		inEffort = "-"
-	}
-	outEffort := "-"
-	if reasoningOut, ok := codec.BuildOpenAIReasoning(req.Params.Reasoning, capability); ok {
-		outEffort = reasoningOut
-	}
-	var allowed []string
-	if capability != nil {
-		allowed = capability.AllowedEfforts
-	}
-	slog.Info(formatLogLine(
-		"reasoning",
-		formatLogKV("req", requestID),
-		formatLogKV("in_mode", inMode),
-		formatLogKV("in_effort", inEffort),
-		formatLogKV("allowed", strings.Join(allowed, ",")),
-		formatLogKV("out_effort", outEffort),
-	))
-}
-
-func handleNonStreamResponse(c *gin.Context, clientModel string, clientResponseID string, hasWebSearch bool, result *execute.ExecutionResult, reqLog *requestLogger) *handlerOutcome {
+func handleOpenAINonStreamResponse(c *gin.Context, clientModel string, clientResponseID string, result *execute.ExecutionResult, reqLog *requestLogger) *handlerOutcome {
 	var resp *codec.Response
-	var webSearchResults []codec.WebSearchResult
 
 	if result.AggregatedResponse != nil {
-		// Aggregate stream mode.
 		resp = result.AggregatedResponse
-		webSearchResults = result.WebSearchResults
 		if reqLog != nil && reqLog.debug {
 			lines := []string{"mode: aggregate_stream"}
 			lines = append(lines, formatStreamStatsLines(result.StreamStats)...)
 			reqLog.WriteSection("upstream_response_full", lines...)
 		}
 	} else {
-		// Direct non-stream mode.
 		var err error
 		resp, err = codec.DecodeOpenAIResponse(result.Body)
 		if err != nil {
-			respondError(c, http.StatusBadGateway, fmt.Sprintf("decode upstream response: %v", err))
+			respondOpenAIError(c, http.StatusBadGateway, fmt.Sprintf("decode upstream response: %v", err))
 			return &handlerOutcome{StreamStats: result.StreamStats}
 		}
-		webSearchResults = codec.ParseOpenWebUISources(string(result.Body))
 		if reqLog != nil && reqLog.debug {
 			reqLog.WriteSection(
 				"upstream_response_full",
@@ -439,16 +267,15 @@ func handleNonStreamResponse(c *gin.Context, clientModel string, clientResponseI
 	}
 
 	if resp == nil {
-		respondError(c, http.StatusBadGateway, "empty response")
+		respondOpenAIError(c, http.StatusBadGateway, "empty response")
 		return &handlerOutcome{StreamStats: result.StreamStats}
 	}
 
-	injectWebSearchBlocks(resp, hasWebSearch, webSearchResults)
-	codec.NormalizeAnthropicResponse(resp, clientResponseID, clientModel)
+	codec.NormalizeResponse(resp, clientResponseID, clientModel)
 
-	clientBody, err := codec.EncodeAnthropicClientResponse(resp)
+	clientBody, err := codec.EncodeOpenAIClientResponse(resp)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, fmt.Sprintf("encode client response: %v", err))
+		respondOpenAIError(c, http.StatusInternalServerError, fmt.Sprintf("encode client response: %v", err))
 		return &handlerOutcome{StreamStats: result.StreamStats}
 	}
 
@@ -459,9 +286,9 @@ func handleNonStreamResponse(c *gin.Context, clientModel string, clientResponseI
 	}
 }
 
-func handlePassthroughStream(c *gin.Context, clientModel string, clientResponseID string, hasWebSearch bool, result *execute.ExecutionResult, reqLog *requestLogger) *handlerOutcome {
+func handleOpenAIPassthroughStream(c *gin.Context, clientModel string, clientResponseID string, result *execute.ExecutionResult, reqLog *requestLogger) *handlerOutcome {
 	if result.StreamReader == nil {
-		respondError(c, http.StatusBadGateway, "no stream reader")
+		respondOpenAIError(c, http.StatusBadGateway, "no stream reader")
 		return &handlerOutcome{}
 	}
 	defer result.StreamReader.Close()
@@ -471,44 +298,34 @@ func handlePassthroughStream(c *gin.Context, clientModel string, clientResponseI
 	c.Writer.Header().Set("Connection", "keep-alive")
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
-		respondError(c, http.StatusInternalServerError, "streaming not supported")
+		respondOpenAIError(c, http.StatusInternalServerError, "streaming not supported")
 		return &handlerOutcome{}
 	}
 
 	scanner := bufio.NewScanner(result.StreamReader)
 	scanner.Buffer(make([]byte, 0, 64*1024), execute.MaxSSELineSize)
 
-	return streamOpenAIToClient(scanner, flusher, c.Writer, clientModel, clientResponseID, hasWebSearch, reqLog, execute.NewStreamStatsTracker(result.StartedAt))
+	return streamOpenAIToOpenAIClient(scanner, flusher, c.Writer, clientModel, clientResponseID, reqLog, execute.NewStreamStatsTracker(result.StartedAt))
 }
 
-func streamOpenAIToClient(
+func streamOpenAIToOpenAIClient(
 	scanner *bufio.Scanner,
 	flusher http.Flusher,
 	w io.Writer,
 	clientModel string,
 	clientResponseID string,
-	hasWebSearch bool,
 	reqLog *requestLogger,
 	tracker *execute.StreamStatsTracker,
 ) *handlerOutcome {
 	var usageResult *codec.Usage
-	webSearchInjected := false
-	var webSearchResults []codec.WebSearchResult
 
-	anthEnc := codec.NewAnthropicStreamEncoder()
+	enc := codec.NewOpenAIStreamEncoder()
 
 	for scanner.Scan() {
 		line := scanner.Text()
 		tracker.ObserveLine(line)
 		if reqLog != nil && reqLog.debug {
 			reqLog.WriteSection("upstream_stream_full", line)
-		}
-		// Capture OpenWebUI sources before normal decoding.
-		if hasWebSearch && !webSearchInjected && strings.HasPrefix(line, "data: ") {
-			if results := codec.ParseOpenWebUISources(strings.TrimPrefix(line, "data: ")); results != nil {
-				webSearchResults = results
-				continue
-			}
 		}
 		events, done, err := codec.DecodeOpenAIStreamLine(line)
 		if err != nil {
@@ -519,30 +336,14 @@ func streamOpenAIToClient(
 			if ev.Type == codec.EventUsageFinal && ev.Usage != nil {
 				usageResult = ev.Usage
 			}
-			ev = codec.NormalizeAnthropicStreamEvent(ev, clientResponseID, clientModel)
-			if !webSearchInjected && hasWebSearch && ev.Type == codec.EventTextDelta && ev.Text != "" {
-				// Ensure message_start is emitted before synthetic blocks.
-				msgStart := anthEnc.Encode(codec.NormalizeAnthropicStreamEvent(codec.StreamEvent{
-					Type: codec.EventTextDelta, ResponseID: ev.ResponseID, Model: ev.Model,
-				}, clientResponseID, clientModel))
-				if msgStart != "" {
-					fmt.Fprint(w, msgStart)
-				}
-				syntheticEv := codec.NormalizeAnthropicStreamEvent(
-					codec.SynthesizeWebSearchSSE(webSearchResults), clientResponseID, clientModel)
-				if out := anthEnc.Encode(syntheticEv); out != "" {
-					fmt.Fprint(w, out)
-				}
-				flusher.Flush()
-				webSearchInjected = true
-			}
-			if sseData := anthEnc.Encode(ev); sseData != "" {
+			ev = codec.NormalizeStreamEvent(ev, clientResponseID, clientModel)
+			if sseData := enc.Encode(ev); sseData != "" {
 				fmt.Fprint(w, sseData)
 				flusher.Flush()
 			}
 		}
 		if done {
-			fmt.Fprint(w, anthEnc.Done())
+			fmt.Fprint(w, enc.Done())
 			flusher.Flush()
 			break
 		}
@@ -571,18 +372,20 @@ func streamOpenAIToClient(
 	}
 }
 
-func respondError(c *gin.Context, status int, msg string) {
-	// Anthropic error format: https://docs.anthropic.com/en/api/errors
+func respondOpenAIError(c *gin.Context, status int, msg string) {
 	c.JSON(status, gin.H{
-		"type":  "error",
-		"error": gin.H{"type": anthropicErrorType(status), "message": msg},
+		"error": gin.H{
+			"message": msg,
+			"type":    openAIErrorType(status),
+			"code":    nil,
+		},
 	})
 }
 
-func anthropicErrorType(status int) string {
+func openAIErrorType(status int) string {
 	switch {
 	case status >= 500:
-		return "api_error"
+		return "server_error"
 	case status == 401:
 		return "authentication_error"
 	case status == 403:
@@ -594,17 +397,4 @@ func anthropicErrorType(status int) string {
 	default:
 		return "invalid_request_error"
 	}
-}
-
-// injectWebSearchBlocks prepends synthetic server_tool_use + web_search_tool_result
-// blocks when a web_search request was made through OpenWebUI upstream.
-func injectWebSearchBlocks(resp *codec.Response, hasWebSearch bool, results []codec.WebSearchResult) {
-	if !hasWebSearch {
-		return
-	}
-	if len(resp.Output) == 0 {
-		return
-	}
-	block := codec.SynthesizeWebSearchBlocks(results)
-	resp.Output[0].Content = append([]codec.ContentBlock{block}, resp.Output[0].Content...)
 }

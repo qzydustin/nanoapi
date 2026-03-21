@@ -123,35 +123,6 @@ func EncodeAnthropicClientResponse(resp *Response) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// NewAnthropicMessageID returns a client-facing Anthropic-style message id.
 func NewAnthropicMessageID() string {
 	return "msg_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 }
-
-// NormalizeAnthropicResponse rewrites client-facing metadata so the response
-// looks like an Anthropic Messages response instead of leaking upstream ids.
-func NormalizeAnthropicResponse(resp *Response, clientResponseID, clientModel string) {
-	if resp == nil {
-		return
-	}
-	if clientResponseID != "" {
-		resp.ID = clientResponseID
-	}
-	if clientModel != "" {
-		resp.Model = clientModel
-	}
-}
-
-// NormalizeAnthropicStreamEvent rewrites client-facing metadata on stream
-// events before encoding them as Anthropic SSE.
-func NormalizeAnthropicStreamEvent(event StreamEvent, clientResponseID, clientModel string) StreamEvent {
-	if clientResponseID != "" {
-		event.ResponseID = clientResponseID
-	}
-	if clientModel != "" {
-		event.Model = clientModel
-	}
-	return event
-}
-
-func strPtr(s string) *string { return &s }

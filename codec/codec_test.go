@@ -892,13 +892,13 @@ func TestEncodeAnthropicClientResponse_ThinkingAndToolUse(t *testing.T) {
 	}
 }
 
-func TestNormalizeAnthropicResponse(t *testing.T) {
+func TestNormalizeResponse(t *testing.T) {
 	resp := &Response{
 		ID:    "chatcmpl-123",
 		Model: "us.anthropic.claude-opus-4-6-v1",
 	}
 
-	NormalizeAnthropicResponse(resp, "msg_test123", "claude-opus-4-6")
+	NormalizeResponse(resp, "msg_test123", "claude-opus-4-6")
 
 	if resp.ID != "msg_test123" {
 		t.Fatalf("id = %q", resp.ID)
