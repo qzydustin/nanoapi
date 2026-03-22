@@ -2,7 +2,6 @@ package server
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -139,57 +138,24 @@ func OpenAIProxyHandler(
 			}
 
 			// 8. Execute.
-			ctx, cancel := context.WithTimeout(c.Request.Context(), upstreamTimeout)
-			result, err := executor.Execute(ctx, plan)
-			if err != nil {
-				cancel()
-				statusCode := http.StatusBadGateway
-				if result != nil && result.StatusCode != 0 {
-					statusCode = result.StatusCode
-				}
-				var streamStats *execute.StreamStats
-				if result != nil {
-					streamStats = result.StreamStats
-				}
-				errMsg := err.Error()
-				if result != nil && len(result.Body) > 0 {
-					errMsg = string(result.Body)
-				}
-
-				slog.Error(
-					formatLogLine("error", append([]string{
-						formatLogKV("req", requestID),
-						formatLogKV("provider", selection.Provider.Name),
-						formatLogKV("upstream", upstreamModel),
-						formatLogKV("status", statusCode),
-						formatLogKV("message", truncateForLog(errMsg, 4000)),
-					}, formatStreamStatsKV(streamStats)...)...),
-				)
-				if reqLog != nil {
-					lines := []string{fmt.Sprintf("status: %d", statusCode)}
-					lines = append(lines, formatStreamStatsLines(streamStats)...)
-					lines = append(lines, "body:", errMsg)
-					writeSection(reqLog,"upstream_response_full", lines...)
-				}
-
-				lastStatusCode = statusCode
-				lastErrMsg = errMsg
-
-				if statusCode >= 500 && i < len(selections)-1 {
-					slog.Info(formatLogLine(
-						"fallback",
+			rr := executeWithRetry(c, executor, plan, upstreamTimeout, requestID, selection.Provider.Name, upstreamModel, reqLog)
+			if rr.Failed {
+				lastStatusCode = rr.StatusCode
+				lastErrMsg = rr.ErrMsg
+				if rr.StatusCode >= 500 && i < len(selections)-1 {
+					slog.Info(formatLogLine("fallback",
 						formatLogKV("req", requestID),
 						formatLogKV("failed_provider", selection.Provider.Name),
-						formatLogKV("status", statusCode),
+						formatLogKV("status", rr.StatusCode),
 						formatLogKV("next_provider", selections[i+1].Provider.Name),
 					))
 					continue
 				}
-
-				respondOpenAIError(c, statusCode, errMsg)
-				recordUsage(usageSvc, tc, startTime, req.ClientModel, upstreamModel, false, usageErrorCode(statusCode), nil)
+				respondOpenAIError(c, rr.StatusCode, rr.ErrMsg)
+				recordUsage(usageSvc, tc, startTime, req.ClientModel, upstreamModel, false, usageErrorCode(rr.StatusCode), nil)
 				return
 			}
+			result := rr.Result
 
 			// 9. Route by execution mode.
 			var outcome *handlerOutcome
@@ -201,8 +167,6 @@ func OpenAIProxyHandler(
 			case execute.ModePassthroughStream:
 				outcome = handleOpenAIPassthroughStream(c, req.ClientModel, clientResponseID, result, reqLog)
 			}
-
-			cancel()
 
 			// 10. Record usage.
 			status := c.Writer.Status()

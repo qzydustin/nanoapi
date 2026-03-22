@@ -207,60 +207,24 @@ func ProxyHandler(
 			}
 
 			// 8. Execute.
-			ctx, cancel := context.WithTimeout(c.Request.Context(), upstreamTimeout)
-			result, err := executor.Execute(ctx, plan)
-			if err != nil {
-				cancel()
-				statusCode := http.StatusBadGateway
-				if result != nil && result.StatusCode != 0 {
-					statusCode = result.StatusCode
-				}
-				var streamStats *execute.StreamStats
-				if result != nil {
-					streamStats = result.StreamStats
-				}
-				errMsg := err.Error()
-				if result != nil && len(result.Body) > 0 {
-					errMsg = string(result.Body)
-				}
-
-				slog.Error(
-					formatLogLine("error", append([]string{
-						formatLogKV("req", requestID),
-						formatLogKV("provider", selection.Provider.Name),
-						formatLogKV("upstream", upstreamModel),
-						formatLogKV("status", statusCode),
-						formatLogKV("message", truncateForLog(errMsg, 4000)),
-					}, formatStreamStatsKV(streamStats)...)...),
-				)
-				if reqLog != nil {
-					lines := []string{fmt.Sprintf("status: %d", statusCode)}
-					lines = append(lines, formatStreamStatsLines(streamStats)...)
-					lines = append(lines, "body:", errMsg)
-					writeSection(reqLog,
-						"upstream_response_full",
-						lines...,
-					)
-				}
-
-				lastStatusCode = statusCode
-				lastErrMsg = errMsg
-
-				if statusCode >= 500 && i < len(selections)-1 {
-					slog.Info(formatLogLine(
-						"fallback",
+			rr := executeWithRetry(c, executor, plan, upstreamTimeout, requestID, selection.Provider.Name, upstreamModel, reqLog)
+			if rr.Failed {
+				lastStatusCode = rr.StatusCode
+				lastErrMsg = rr.ErrMsg
+				if rr.StatusCode >= 500 && i < len(selections)-1 {
+					slog.Info(formatLogLine("fallback",
 						formatLogKV("req", requestID),
 						formatLogKV("failed_provider", selection.Provider.Name),
-						formatLogKV("status", statusCode),
+						formatLogKV("status", rr.StatusCode),
 						formatLogKV("next_provider", selections[i+1].Provider.Name),
 					))
 					continue
 				}
-
-				respondError(c, statusCode, errMsg)
-				recordUsage(usageSvc, tc, startTime, req.ClientModel, upstreamModel, false, usageErrorCode(statusCode), nil)
+				respondError(c, rr.StatusCode, rr.ErrMsg)
+				recordUsage(usageSvc, tc, startTime, req.ClientModel, upstreamModel, false, usageErrorCode(rr.StatusCode), nil)
 				return
 			}
+			result := rr.Result
 
 			// 9. Route by execution mode.
 			var outcome *handlerOutcome
@@ -272,10 +236,6 @@ func ProxyHandler(
 			case execute.ModePassthroughStream:
 				outcome = handlePassthroughStream(c, req.ClientModel, clientResponseID, hasWebSearch, result, reqLog)
 			}
-
-			// Cancel context after response handling (not before), so passthrough
-			// streams can finish reading from the upstream connection.
-			cancel()
 
 			// 10. Record usage (non-fatal).
 			status := c.Writer.Status()
@@ -301,6 +261,94 @@ func ProxyHandler(
 		respondError(c, lastStatusCode, lastErrMsg)
 		recordUsage(usageSvc, tc, startTime, "", "", false, usageErrorCode(lastStatusCode), nil)
 	}
+}
+
+const maxRetries = 3
+
+type retryResult struct {
+	Result     *execute.ExecutionResult
+	StatusCode int
+	ErrMsg     string
+	Failed     bool
+}
+
+// executeWithRetry executes the plan up to maxRetries times, retrying on 5xx.
+func executeWithRetry(
+	c *gin.Context,
+	executor *execute.Executor,
+	plan *execute.ExecutionPlan,
+	upstreamTimeout time.Duration,
+	requestID string,
+	providerName string,
+	upstreamModel string,
+	reqLog *os.File,
+) retryResult {
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), upstreamTimeout)
+		result, err := executor.Execute(ctx, plan)
+		if err == nil {
+			cancel()
+			return retryResult{Result: result}
+		}
+		cancel()
+
+		statusCode := http.StatusBadGateway
+		if result != nil && result.StatusCode != 0 {
+			statusCode = result.StatusCode
+		}
+		var streamStats *execute.StreamStats
+		if result != nil {
+			streamStats = result.StreamStats
+		}
+		errMsg := err.Error()
+		if result != nil && len(result.Body) > 0 {
+			errMsg = sanitizeErrorBody(result.Body, statusCode)
+		}
+
+		slog.Error(formatLogLine("error", append([]string{
+			formatLogKV("req", requestID),
+			formatLogKV("provider", providerName),
+			formatLogKV("upstream", upstreamModel),
+			formatLogKV("status", statusCode),
+			formatLogKV("attempt", fmt.Sprintf("%d/%d", attempt, maxRetries)),
+			formatLogKV("message", truncateForLog(errMsg, 4000)),
+		}, formatStreamStatsKV(streamStats)...)...))
+		if reqLog != nil {
+			lines := []string{fmt.Sprintf("status: %d", statusCode)}
+			lines = append(lines, formatStreamStatsLines(streamStats)...)
+			lines = append(lines, "body:", errMsg)
+			writeSection(reqLog, "upstream_response_full", lines...)
+		}
+
+		if statusCode < 500 || attempt == maxRetries {
+			return retryResult{Result: result, StatusCode: statusCode, ErrMsg: errMsg, Failed: true}
+		}
+
+		slog.Info(formatLogLine("retry",
+			formatLogKV("req", requestID),
+			formatLogKV("provider", providerName),
+			formatLogKV("status", statusCode),
+			formatLogKV("attempt", fmt.Sprintf("%d/%d", attempt, maxRetries)),
+		))
+	}
+	panic("unreachable")
+}
+
+// sanitizeErrorBody strips HTML from upstream error bodies, extracting <h1> text if present.
+func sanitizeErrorBody(body []byte, statusCode int) string {
+	s := strings.TrimSpace(string(body))
+	if s == "" || s[0] != '<' {
+		return s
+	}
+	if start := strings.Index(s, "<h1>"); start != -1 {
+		start += 4
+		if end := strings.Index(s[start:], "</h1>"); end != -1 {
+			if text := strings.TrimSpace(s[start : start+end]); text != "" {
+				return text
+			}
+		}
+	}
+	return fmt.Sprintf("upstream error: status %d", statusCode)
 }
 
 func truncateForLog(s string, max int) string {

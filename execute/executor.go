@@ -149,7 +149,7 @@ func NewExecutor() *Executor {
 		MaxIdleConns:          100,
 		MaxIdleConnsPerHost:   10,
 		IdleConnTimeout:       90 * time.Second,
-		ResponseHeaderTimeout: 120 * time.Second,
+		ResponseHeaderTimeout: 300 * time.Second,
 	}
 	return &Executor{client: &http.Client{Transport: transport}}
 }
