@@ -168,6 +168,10 @@ func OpenAIProxyHandler(
 				outcome = handleOpenAIPassthroughStream(c, req.ClientModel, clientResponseID, result, reqLog)
 			}
 
+			// Cancel context after response handling (not before), so passthrough
+			// streams can finish reading from the upstream connection.
+			rr.Cancel()
+
 			// 10. Record usage.
 			status := c.Writer.Status()
 			success := status > 0 && status < 400

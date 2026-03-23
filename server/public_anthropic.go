@@ -237,6 +237,10 @@ func ProxyHandler(
 				outcome = handlePassthroughStream(c, req.ClientModel, clientResponseID, hasWebSearch, result, reqLog)
 			}
 
+			// Cancel context after response handling (not before), so passthrough
+			// streams can finish reading from the upstream connection.
+			rr.Cancel()
+
 			// 10. Record usage (non-fatal).
 			status := c.Writer.Status()
 			success := status > 0 && status < 400
@@ -267,6 +271,7 @@ const maxRetries = 3
 
 type retryResult struct {
 	Result     *execute.ExecutionResult
+	Cancel     context.CancelFunc // caller must call this after consuming the result
 	StatusCode int
 	ErrMsg     string
 	Failed     bool
@@ -287,8 +292,9 @@ func executeWithRetry(
 		ctx, cancel := context.WithTimeout(c.Request.Context(), upstreamTimeout)
 		result, err := executor.Execute(ctx, plan)
 		if err == nil {
-			cancel()
-			return retryResult{Result: result}
+			// Do NOT cancel here — for passthrough streams the caller must
+			// cancel after the response body has been fully consumed.
+			return retryResult{Result: result, Cancel: cancel}
 		}
 		cancel()
 
