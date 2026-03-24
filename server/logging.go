@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,43 +16,72 @@ import (
 	"github.com/qzydustin/nanoapi/execute"
 )
 
-func newDebugLog(cfg config.LoggingConfig, requestID string) (*os.File, error) {
+// debugLog buffers debug data in memory; flush writes to disk on errors only.
+// All methods are nil-safe.
+type debugLog struct {
+	buf       bytes.Buffer
+	path      string
+	mustFlush bool
+}
+
+func newDebugLog(cfg config.LoggingConfig, requestID string) (*debugLog, error) {
 	if !cfg.Debug {
 		return nil, nil
 	}
-
 	if err := os.MkdirAll(cfg.RequestDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create request log dir: %w", err)
 	}
-
-	path := filepath.Join(cfg.RequestDir, requestID+".log")
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-	if err != nil {
-		return nil, fmt.Errorf("open request log file: %w", err)
-	}
-	return file, nil
+	return &debugLog{
+		path: filepath.Join(cfg.RequestDir, requestID+".log"),
+	}, nil
 }
 
-func debugPath(f *os.File) string {
-	if f == nil {
-		return ""
-	}
-	return f.Name()
-}
-
-func writeSection(f *os.File, section string, lines ...string) {
-	if f == nil {
+func (d *debugLog) section(name string, lines ...string) {
+	if d == nil {
 		return
 	}
-
-	fmt.Fprintf(f, "[%s]\n", section)
+	fmt.Fprintf(&d.buf, "[%s]\n", name)
 	for _, line := range lines {
 		if line == "" {
 			continue
 		}
-		fmt.Fprintln(f, line)
+		fmt.Fprintln(&d.buf, line)
 	}
-	fmt.Fprintln(f)
+	fmt.Fprintln(&d.buf)
+}
+
+func (d *debugLog) filePath() string {
+	if d == nil {
+		return ""
+	}
+	return d.path
+}
+
+func (d *debugLog) flush() {
+	if d == nil || d.buf.Len() == 0 {
+		return
+	}
+	os.WriteFile(d.path, d.buf.Bytes(), 0o644)
+}
+
+// logStreamScanError logs stream scan errors: WARN for client disconnect, ERROR otherwise.
+func logStreamScanError(err error, stats *execute.StreamStats, d *debugLog) {
+	logArgs := append([]string{
+		formatLogKV("message", fmt.Sprintf("scan upstream stream: %v", err)),
+	}, formatStreamStatsKV(stats)...)
+
+	if errors.Is(err, context.Canceled) {
+		slog.Warn(formatLogLine("stream_client_disconnected", logArgs...))
+	} else {
+		slog.Error(formatLogLine("stream_error", logArgs...))
+	}
+
+	lines := []string{fmt.Sprintf("scan_error: %v", err)}
+	lines = append(lines, formatStreamStatsLines(stats)...)
+	d.section("upstream_stream_error", lines...)
+	if d != nil {
+		d.mustFlush = true
+	}
 }
 
 func formatLogLine(event string, parts ...string) string {
@@ -155,24 +185,4 @@ func formatStreamStatsLines(stats *execute.StreamStats) []string {
 		lines = append(lines, fmt.Sprintf("last_chunk_gap_ms: %d", *stats.LastChunkGapMs))
 	}
 	return lines
-}
-
-// logStreamScanError logs a stream scanner error at the appropriate level:
-// WARN for client disconnects, ERROR for real upstream failures.
-func logStreamScanError(err error, stats *execute.StreamStats, reqLog *os.File) {
-	logArgs := append([]string{
-		formatLogKV("message", fmt.Sprintf("scan upstream stream: %v", err)),
-	}, formatStreamStatsKV(stats)...)
-
-	if errors.Is(err, context.Canceled) {
-		slog.Warn(formatLogLine("stream_client_disconnected", logArgs...))
-	} else {
-		slog.Error(formatLogLine("stream_error", logArgs...))
-	}
-
-	if reqLog != nil {
-		lines := []string{fmt.Sprintf("scan_error: %v", err)}
-		lines = append(lines, formatStreamStatsLines(stats)...)
-		writeSection(reqLog, "upstream_stream_error", lines...)
-	}
 }

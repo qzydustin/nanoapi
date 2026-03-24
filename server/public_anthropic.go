@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -101,7 +100,12 @@ func ProxyHandler(
 			))
 		}
 		if reqLog != nil {
-			defer reqLog.Close()
+			defer func() {
+				status := c.Writer.Status()
+				if status == 0 || status >= 400 || reqLog.mustFlush {
+					reqLog.flush()
+				}
+			}()
 		}
 
 		// 1. Read body.
@@ -129,7 +133,7 @@ func ProxyHandler(
 			lines = append(lines, formatHeaderLines(c.Request.Header)...)
 			lines = append(lines, "body:")
 			lines = append(lines, string(body))
-			writeSection(reqLog,"client_request_full", lines...)
+			reqLog.section("client_request_full", lines...)
 		}
 
 		// 2. Decode request.
@@ -203,12 +207,12 @@ func ProxyHandler(
 				lines = append(lines, formatMapLines(plan.Headers)...)
 				lines = append(lines, "body:")
 				lines = append(lines, string(plan.Body))
-				writeSection(reqLog,"upstream_request_full", lines...)
+				reqLog.section("upstream_request_full", lines...)
 			}
 
 			// 8. Execute.
 			rr := executeWithRetry(c, executor, plan, upstreamTimeout, requestID, selection.Provider.Name, upstreamModel, reqLog)
-			if rr.Failed {
+			if rr.Cancel == nil {
 				if rr.StatusCode == 499 {
 					return
 				}
@@ -258,7 +262,7 @@ func ProxyHandler(
 					formatLogKV("status", status),
 					formatLogKV("latency_ms", time.Since(startTime).Milliseconds()),
 					formatLogKV("success", success),
-					formatLogKV("debug_file", debugPath(reqLog)),
+					formatLogKV("debug_file", reqLog.filePath()),
 				}, formatStreamStatsKV(outcome.StreamStats)...)...,
 			))
 			recordUsage(usageSvc, tc, startTime, req.ClientModel, upstreamModel, success, errCode, outcome.Usage)
@@ -274,10 +278,9 @@ const maxRetries = 3
 
 type retryResult struct {
 	Result     *execute.ExecutionResult
-	Cancel     context.CancelFunc // caller must call this after consuming the result
+	Cancel     context.CancelFunc // non-nil on success; caller must call after consuming result
 	StatusCode int
 	ErrMsg     string
-	Failed     bool
 }
 
 // executeWithRetry executes the plan up to maxRetries times, retrying on 5xx.
@@ -289,7 +292,7 @@ func executeWithRetry(
 	requestID string,
 	providerName string,
 	upstreamModel string,
-	reqLog *os.File,
+	reqLog *debugLog,
 ) retryResult {
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), upstreamTimeout)
@@ -308,7 +311,7 @@ func executeWithRetry(
 				formatLogKV("provider", providerName),
 				formatLogKV("upstream", upstreamModel),
 			))
-			return retryResult{StatusCode: 499, ErrMsg: "client disconnected", Failed: true}
+			return retryResult{StatusCode: 499, ErrMsg: "client disconnected"}
 		}
 
 		statusCode := http.StatusBadGateway
@@ -336,11 +339,11 @@ func executeWithRetry(
 			lines := []string{fmt.Sprintf("status: %d", statusCode)}
 			lines = append(lines, formatStreamStatsLines(streamStats)...)
 			lines = append(lines, "body:", errMsg)
-			writeSection(reqLog, "upstream_response_full", lines...)
+			reqLog.section( "upstream_response_full", lines...)
 		}
 
 		if statusCode < 500 || attempt == maxRetries {
-			return retryResult{Result: result, StatusCode: statusCode, ErrMsg: errMsg, Failed: true}
+			return retryResult{Result: result, StatusCode: statusCode, ErrMsg: errMsg}
 		}
 
 		slog.Info(formatLogLine("retry",
@@ -376,7 +379,7 @@ func logAccess(
 	providerName string,
 	upstreamModel string,
 	mode execute.ExecutionMode,
-	reqLog *os.File,
+	reqLog *debugLog,
 ) {
 	maxTokens := any("-")
 	if req.Params.MaxTokens != nil {
@@ -390,7 +393,7 @@ func logAccess(
 		formatLogKV("stream", req.Stream),
 		formatLogKV("mode", mode),
 		formatLogKV("max_tokens", maxTokens),
-		formatLogKV("debug_file", debugPath(reqLog)),
+		formatLogKV("debug_file", reqLog.filePath()),
 	}
 	slog.Info(formatLogLine("access", parts...))
 }
@@ -433,7 +436,7 @@ func logReasoning(
 	))
 }
 
-func handleNonStreamResponse(c *gin.Context, clientModel string, clientResponseID string, hasWebSearch bool, result *execute.ExecutionResult, reqLog *os.File) *handlerOutcome {
+func handleNonStreamResponse(c *gin.Context, clientModel string, clientResponseID string, hasWebSearch bool, result *execute.ExecutionResult, reqLog *debugLog) *handlerOutcome {
 	var resp *codec.Response
 	var webSearchResults []codec.WebSearchResult
 
@@ -443,7 +446,7 @@ func handleNonStreamResponse(c *gin.Context, clientModel string, clientResponseI
 		if reqLog != nil {
 			lines := []string{"mode: aggregate_stream"}
 			lines = append(lines, formatStreamStatsLines(result.StreamStats)...)
-			writeSection(reqLog,"upstream_response_full", lines...)
+			reqLog.section("upstream_response_full", lines...)
 		}
 	} else {
 		var err error
@@ -453,15 +456,13 @@ func handleNonStreamResponse(c *gin.Context, clientModel string, clientResponseI
 			return &handlerOutcome{StreamStats: result.StreamStats}
 		}
 		webSearchResults = codec.ParseOpenWebUISources(string(result.Body))
-		if reqLog != nil {
-			writeSection(reqLog,
-				"upstream_response_full",
-				fmt.Sprintf("status: %d", result.StatusCode),
-				"headers:",
-			)
-			writeSection(reqLog,"upstream_response_headers", formatHeaderLines(result.Headers)...)
-			writeSection(reqLog,"upstream_response_body", string(result.Body))
-		}
+		reqLog.section(
+			"upstream_response_full",
+			fmt.Sprintf("status: %d", result.StatusCode),
+			"headers:",
+		)
+		reqLog.section("upstream_response_headers", formatHeaderLines(result.Headers)...)
+		reqLog.section("upstream_response_body", string(result.Body))
 	}
 
 	if resp == nil {
@@ -485,7 +486,7 @@ func handleNonStreamResponse(c *gin.Context, clientModel string, clientResponseI
 	}
 }
 
-func handlePassthroughStream(c *gin.Context, clientModel string, clientResponseID string, hasWebSearch bool, result *execute.ExecutionResult, reqLog *os.File) *handlerOutcome {
+func handlePassthroughStream(c *gin.Context, clientModel string, clientResponseID string, hasWebSearch bool, result *execute.ExecutionResult, reqLog *debugLog) *handlerOutcome {
 	if result.StreamReader == nil {
 		respondError(c, http.StatusBadGateway, "no stream reader")
 		return &handlerOutcome{}
@@ -514,7 +515,7 @@ func streamOpenAIToClient(
 	clientModel string,
 	clientResponseID string,
 	hasWebSearch bool,
-	reqLog *os.File,
+	reqLog *debugLog,
 	tracker *execute.StreamStatsTracker,
 ) *handlerOutcome {
 	var usageResult *codec.Usage
@@ -527,7 +528,7 @@ func streamOpenAIToClient(
 		line := scanner.Text()
 		tracker.ObserveLine(line)
 		if reqLog != nil {
-			writeSection(reqLog,"upstream_stream_full", line)
+			reqLog.section("upstream_stream_full", line)
 		}
 		// Capture OpenWebUI sources before normal decoding.
 		if hasWebSearch && !webSearchInjected && strings.HasPrefix(line, "data: ") {
@@ -579,7 +580,7 @@ func streamOpenAIToClient(
 	if reqLog != nil {
 		lines := []string{"mode: passthrough_stream"}
 		lines = append(lines, formatStreamStatsLines(tracker.Snapshot())...)
-		writeSection(reqLog,"upstream_response_full", lines...)
+		reqLog.section("upstream_response_full", lines...)
 	}
 	return &handlerOutcome{
 		Usage:       usageResult,

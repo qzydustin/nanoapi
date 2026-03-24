@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -60,7 +59,12 @@ func OpenAIProxyHandler(
 			))
 		}
 		if reqLog != nil {
-			defer reqLog.Close()
+			defer func() {
+				status := c.Writer.Status()
+				if status == 0 || status >= 400 || reqLog.mustFlush {
+					reqLog.flush()
+				}
+			}()
 		}
 
 		// 1. Read body.
@@ -88,7 +92,7 @@ func OpenAIProxyHandler(
 			lines = append(lines, formatHeaderLines(c.Request.Header)...)
 			lines = append(lines, "body:")
 			lines = append(lines, string(body))
-			writeSection(reqLog,"client_request_full", lines...)
+			reqLog.section("client_request_full", lines...)
 		}
 
 		// 2. Decode request.
@@ -154,12 +158,12 @@ func OpenAIProxyHandler(
 				lines = append(lines, formatMapLines(plan.Headers)...)
 				lines = append(lines, "body:")
 				lines = append(lines, string(plan.Body))
-				writeSection(reqLog,"upstream_request_full", lines...)
+				reqLog.section("upstream_request_full", lines...)
 			}
 
 			// 8. Execute.
 			rr := executeWithRetry(c, executor, plan, upstreamTimeout, requestID, selection.Provider.Name, upstreamModel, reqLog)
-			if rr.Failed {
+			if rr.Cancel == nil {
 				if rr.StatusCode == 499 {
 					return
 				}
@@ -209,7 +213,7 @@ func OpenAIProxyHandler(
 					formatLogKV("status", status),
 					formatLogKV("latency_ms", time.Since(startTime).Milliseconds()),
 					formatLogKV("success", success),
-					formatLogKV("debug_file", debugPath(reqLog)),
+					formatLogKV("debug_file", reqLog.filePath()),
 				}, formatStreamStatsKV(outcome.StreamStats)...)...,
 			))
 			recordUsage(usageSvc, tc, startTime, req.ClientModel, upstreamModel, success, errCode, outcome.Usage)
@@ -221,7 +225,7 @@ func OpenAIProxyHandler(
 	}
 }
 
-func handleOpenAINonStreamResponse(c *gin.Context, clientModel string, clientResponseID string, result *execute.ExecutionResult, reqLog *os.File) *handlerOutcome {
+func handleOpenAINonStreamResponse(c *gin.Context, clientModel string, clientResponseID string, result *execute.ExecutionResult, reqLog *debugLog) *handlerOutcome {
 	var resp *codec.Response
 
 	if result.AggregatedResponse != nil {
@@ -229,7 +233,7 @@ func handleOpenAINonStreamResponse(c *gin.Context, clientModel string, clientRes
 		if reqLog != nil {
 			lines := []string{"mode: aggregate_stream"}
 			lines = append(lines, formatStreamStatsLines(result.StreamStats)...)
-			writeSection(reqLog,"upstream_response_full", lines...)
+			reqLog.section("upstream_response_full", lines...)
 		}
 	} else {
 		var err error
@@ -238,15 +242,13 @@ func handleOpenAINonStreamResponse(c *gin.Context, clientModel string, clientRes
 			respondOpenAIError(c, http.StatusBadGateway, "decode upstream response: "+err.Error())
 			return &handlerOutcome{StreamStats: result.StreamStats}
 		}
-		if reqLog != nil {
-			writeSection(reqLog,
-				"upstream_response_full",
-				fmt.Sprintf("status: %d", result.StatusCode),
-				"headers:",
-			)
-			writeSection(reqLog,"upstream_response_headers", formatHeaderLines(result.Headers)...)
-			writeSection(reqLog,"upstream_response_body", string(result.Body))
-		}
+		reqLog.section(
+			"upstream_response_full",
+			fmt.Sprintf("status: %d", result.StatusCode),
+			"headers:",
+		)
+		reqLog.section("upstream_response_headers", formatHeaderLines(result.Headers)...)
+		reqLog.section("upstream_response_body", string(result.Body))
 	}
 
 	if resp == nil {
@@ -269,7 +271,7 @@ func handleOpenAINonStreamResponse(c *gin.Context, clientModel string, clientRes
 	}
 }
 
-func handleOpenAIPassthroughStream(c *gin.Context, clientModel string, clientResponseID string, result *execute.ExecutionResult, reqLog *os.File) *handlerOutcome {
+func handleOpenAIPassthroughStream(c *gin.Context, clientModel string, clientResponseID string, result *execute.ExecutionResult, reqLog *debugLog) *handlerOutcome {
 	if result.StreamReader == nil {
 		respondOpenAIError(c, http.StatusBadGateway, "no stream reader")
 		return &handlerOutcome{}
@@ -297,7 +299,7 @@ func streamOpenAIToOpenAIClient(
 	w io.Writer,
 	clientModel string,
 	clientResponseID string,
-	reqLog *os.File,
+	reqLog *debugLog,
 	tracker *execute.StreamStatsTracker,
 ) *handlerOutcome {
 	var usageResult *codec.Usage
@@ -308,7 +310,7 @@ func streamOpenAIToOpenAIClient(
 		line := scanner.Text()
 		tracker.ObserveLine(line)
 		if reqLog != nil {
-			writeSection(reqLog,"upstream_stream_full", line)
+			reqLog.section("upstream_stream_full", line)
 		}
 		events, done, err := codec.DecodeOpenAIStreamLine(line)
 		if err != nil {
@@ -337,7 +339,7 @@ func streamOpenAIToOpenAIClient(
 	if reqLog != nil {
 		lines := []string{"mode: passthrough_stream"}
 		lines = append(lines, formatStreamStatsLines(tracker.Snapshot())...)
-		writeSection(reqLog,"upstream_response_full", lines...)
+		reqLog.section("upstream_response_full", lines...)
 	}
 	return &handlerOutcome{
 		Usage:       usageResult,
