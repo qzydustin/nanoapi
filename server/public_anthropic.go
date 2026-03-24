@@ -126,7 +126,7 @@ func ProxyHandler(
 			for k, v := range c.Request.URL.Query() {
 				lines = append(lines, k+": "+strings.Join(v, ", "))
 			}
-			lines = append(lines, formatMapLines(formatHeadersForDebug(c.Request.Header))...)
+			lines = append(lines, formatHeaderLines(c.Request.Header)...)
 			lines = append(lines, "body:")
 			lines = append(lines, string(body))
 			writeSection(reqLog,"client_request_full", lines...)
@@ -209,6 +209,9 @@ func ProxyHandler(
 			// 8. Execute.
 			rr := executeWithRetry(c, executor, plan, upstreamTimeout, requestID, selection.Provider.Name, upstreamModel, reqLog)
 			if rr.Failed {
+				if rr.StatusCode == 499 {
+					return
+				}
 				lastStatusCode = rr.StatusCode
 				lastErrMsg = rr.ErrMsg
 				if rr.StatusCode >= 500 && i < len(selections)-1 {
@@ -298,6 +301,16 @@ func executeWithRetry(
 		}
 		cancel()
 
+		// Client disconnected — retrying is pointless.
+		if c.Request.Context().Err() != nil {
+			slog.Warn(formatLogLine("client_disconnected",
+				formatLogKV("req", requestID),
+				formatLogKV("provider", providerName),
+				formatLogKV("upstream", upstreamModel),
+			))
+			return retryResult{StatusCode: 499, ErrMsg: "client disconnected", Failed: true}
+		}
+
 		statusCode := http.StatusBadGateway
 		if result != nil && result.StatusCode != 0 {
 			statusCode = result.StatusCode
@@ -355,41 +368,6 @@ func sanitizeErrorBody(body []byte, statusCode int) string {
 		}
 	}
 	return fmt.Sprintf("upstream error: status %d", statusCode)
-}
-
-func truncateForLog(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "...(truncated)"
-}
-
-func formatStreamStatsKV(stats *execute.StreamStats) []string {
-	if stats == nil {
-		return nil
-	}
-	var parts []string
-	if stats.TTFTMs != nil {
-		parts = append(parts, formatLogKV("ttft_ms", *stats.TTFTMs))
-	}
-	if stats.LastChunkGapMs != nil {
-		parts = append(parts, formatLogKV("last_chunk_gap_ms", *stats.LastChunkGapMs))
-	}
-	return parts
-}
-
-func formatStreamStatsLines(stats *execute.StreamStats) []string {
-	if stats == nil {
-		return nil
-	}
-	var lines []string
-	if stats.TTFTMs != nil {
-		lines = append(lines, fmt.Sprintf("ttft_ms: %d", *stats.TTFTMs))
-	}
-	if stats.LastChunkGapMs != nil {
-		lines = append(lines, fmt.Sprintf("last_chunk_gap_ms: %d", *stats.LastChunkGapMs))
-	}
-	return lines
 }
 
 func logAccess(
@@ -481,7 +459,7 @@ func handleNonStreamResponse(c *gin.Context, clientModel string, clientResponseI
 				fmt.Sprintf("status: %d", result.StatusCode),
 				"headers:",
 			)
-			writeSection(reqLog,"upstream_response_headers", formatMapLines(formatHeadersForDebug(result.Headers))...)
+			writeSection(reqLog,"upstream_response_headers", formatHeaderLines(result.Headers)...)
 			writeSection(reqLog,"upstream_response_body", string(result.Body))
 		}
 	}
@@ -596,17 +574,7 @@ func streamOpenAIToClient(
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		slog.Error(formatLogLine(
-			"stream_error",
-			append([]string{
-				formatLogKV("message", fmt.Sprintf("scan upstream stream: %v", err)),
-			}, formatStreamStatsKV(tracker.Snapshot())...)...,
-		))
-		if reqLog != nil {
-			lines := []string{fmt.Sprintf("scan_error: %v", err)}
-			lines = append(lines, formatStreamStatsLines(tracker.Snapshot())...)
-			writeSection(reqLog,"upstream_stream_error", lines...)
-		}
+		logStreamScanError(err, tracker.Snapshot(), reqLog)
 	}
 	if reqLog != nil {
 		lines := []string{"mode: passthrough_stream"}

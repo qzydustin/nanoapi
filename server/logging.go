@@ -1,7 +1,10 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -9,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/qzydustin/nanoapi/config"
+	"github.com/qzydustin/nanoapi/execute"
 )
 
 func newDebugLog(cfg config.LoggingConfig, requestID string) (*os.File, error) {
@@ -66,15 +70,25 @@ func formatLogKV(key string, value any) string {
 	return fmt.Sprintf("%s=%v", key, value)
 }
 
-func formatHeadersForDebug(headers http.Header) map[string]string {
+func formatHeaderLines(headers http.Header) []string {
 	if len(headers) == 0 {
 		return nil
 	}
-	out := make(map[string]string, len(headers))
-	for key, values := range headers {
-		out[key] = strings.Join(values, ", ")
+	keys := make([]string, 0, len(headers))
+	for key := range headers {
+		keys = append(keys, key)
 	}
-	return out
+	slices.Sort(keys)
+
+	lines := make([]string, 0, len(keys))
+	for _, key := range keys {
+		value := strings.Join(headers.Values(key), ", ")
+		if strings.ToLower(key) == "authorization" {
+			value = redactHeaderValue(value)
+		}
+		lines = append(lines, fmt.Sprintf("%s: %s", key, value))
+	}
+	return lines
 }
 
 func formatMapLines(values map[string]string) []string {
@@ -106,4 +120,59 @@ func redactHeaderValue(value string) string {
 		return "[redacted]"
 	}
 	return value[:8] + "...[redacted]"
+}
+
+func truncateForLog(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "...(truncated)"
+}
+
+func formatStreamStatsKV(stats *execute.StreamStats) []string {
+	if stats == nil {
+		return nil
+	}
+	var parts []string
+	if stats.TTFTMs != nil {
+		parts = append(parts, formatLogKV("ttft_ms", *stats.TTFTMs))
+	}
+	if stats.LastChunkGapMs != nil {
+		parts = append(parts, formatLogKV("last_chunk_gap_ms", *stats.LastChunkGapMs))
+	}
+	return parts
+}
+
+func formatStreamStatsLines(stats *execute.StreamStats) []string {
+	if stats == nil {
+		return nil
+	}
+	var lines []string
+	if stats.TTFTMs != nil {
+		lines = append(lines, fmt.Sprintf("ttft_ms: %d", *stats.TTFTMs))
+	}
+	if stats.LastChunkGapMs != nil {
+		lines = append(lines, fmt.Sprintf("last_chunk_gap_ms: %d", *stats.LastChunkGapMs))
+	}
+	return lines
+}
+
+// logStreamScanError logs a stream scanner error at the appropriate level:
+// WARN for client disconnects, ERROR for real upstream failures.
+func logStreamScanError(err error, stats *execute.StreamStats, reqLog *os.File) {
+	logArgs := append([]string{
+		formatLogKV("message", fmt.Sprintf("scan upstream stream: %v", err)),
+	}, formatStreamStatsKV(stats)...)
+
+	if errors.Is(err, context.Canceled) {
+		slog.Warn(formatLogLine("stream_client_disconnected", logArgs...))
+	} else {
+		slog.Error(formatLogLine("stream_error", logArgs...))
+	}
+
+	if reqLog != nil {
+		lines := []string{fmt.Sprintf("scan_error: %v", err)}
+		lines = append(lines, formatStreamStatsLines(stats)...)
+		writeSection(reqLog, "upstream_stream_error", lines...)
+	}
 }

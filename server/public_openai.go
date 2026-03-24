@@ -85,7 +85,7 @@ func OpenAIProxyHandler(
 			for k, v := range c.Request.URL.Query() {
 				lines = append(lines, k+": "+strings.Join(v, ", "))
 			}
-			lines = append(lines, formatMapLines(formatHeadersForDebug(c.Request.Header))...)
+			lines = append(lines, formatHeaderLines(c.Request.Header)...)
 			lines = append(lines, "body:")
 			lines = append(lines, string(body))
 			writeSection(reqLog,"client_request_full", lines...)
@@ -160,6 +160,9 @@ func OpenAIProxyHandler(
 			// 8. Execute.
 			rr := executeWithRetry(c, executor, plan, upstreamTimeout, requestID, selection.Provider.Name, upstreamModel, reqLog)
 			if rr.Failed {
+				if rr.StatusCode == 499 {
+					return
+				}
 				lastStatusCode = rr.StatusCode
 				lastErrMsg = rr.ErrMsg
 				if rr.StatusCode >= 500 && i < len(selections)-1 {
@@ -241,7 +244,7 @@ func handleOpenAINonStreamResponse(c *gin.Context, clientModel string, clientRes
 				fmt.Sprintf("status: %d", result.StatusCode),
 				"headers:",
 			)
-			writeSection(reqLog,"upstream_response_headers", formatMapLines(formatHeadersForDebug(result.Headers))...)
+			writeSection(reqLog,"upstream_response_headers", formatHeaderLines(result.Headers)...)
 			writeSection(reqLog,"upstream_response_body", string(result.Body))
 		}
 	}
@@ -329,17 +332,7 @@ func streamOpenAIToOpenAIClient(
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		slog.Error(formatLogLine(
-			"stream_error",
-			append([]string{
-				formatLogKV("message", fmt.Sprintf("scan upstream stream: %v", err)),
-			}, formatStreamStatsKV(tracker.Snapshot())...)...,
-		))
-		if reqLog != nil {
-			lines := []string{fmt.Sprintf("scan_error: %v", err)}
-			lines = append(lines, formatStreamStatsLines(tracker.Snapshot())...)
-			writeSection(reqLog,"upstream_stream_error", lines...)
-		}
+		logStreamScanError(err, tracker.Snapshot(), reqLog)
 	}
 	if reqLog != nil {
 		lines := []string{"mode: passthrough_stream"}
