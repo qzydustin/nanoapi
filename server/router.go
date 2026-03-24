@@ -47,6 +47,7 @@ func NewRouter(
 		proxy.POST("/v1/chat/completions",
 			OpenAIProxyHandler(selector, executor, usageSvc, logCfg, upstreamTimeout, maxBodyBytes),
 		)
+		proxy.GET("/v1/models", OpenAIModelsHandler(selector))
 	}
 
 	// Gateway-owned API endpoints — token self-query.

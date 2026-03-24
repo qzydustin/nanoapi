@@ -115,6 +115,22 @@ func mergeOverrideParams(dst *config.OverrideParams, src config.OverrideParams) 
 	}
 }
 
+// ListModels returns deduplicated client model names across all providers.
+func (s *Selector) ListModels() []string {
+	seen := make(map[string]struct{})
+	var models []string
+	for _, p := range s.providers {
+		for m := range p.Models {
+			if _, ok := seen[m]; !ok {
+				seen[m] = struct{}{}
+				models = append(models, m)
+			}
+		}
+	}
+	sort.Strings(models)
+	return models
+}
+
 func matchesOverrideTarget(req *codec.Request, target config.OverrideTarget) bool {
 	if target.ClientModel != nil && req.ClientModel != *target.ClientModel {
 		return false

@@ -17,6 +17,26 @@ import (
 	"github.com/qzydustin/nanoapi/execute"
 )
 
+// OpenAIModelsHandler returns the handler for the /v1/models endpoint.
+func OpenAIModelsHandler(selector *Selector) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		models := selector.ListModels()
+		data := make([]gin.H, len(models))
+		for i, m := range models {
+			data[i] = gin.H{
+				"id":       m,
+				"object":   "model",
+				"created":  0,
+				"owned_by": "nanoapi",
+			}
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"object": "list",
+			"data":   data,
+		})
+	}
+}
+
 // OpenAIProxyHandler returns the proxy handler for the /v1/chat/completions endpoint.
 func OpenAIProxyHandler(
 	selector *Selector,
