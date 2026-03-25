@@ -7,12 +7,11 @@ import (
 )
 
 type OpenAIStreamEncoder struct {
-	responseID    string
-	model         string
-	created       int64
-	started       bool
-	toolCallIndex int
-	usage         *Usage
+	responseID string
+	model      string
+	created    int64
+	started    bool
+	usage      *Usage
 }
 
 func NewOpenAIStreamEncoder() *OpenAIStreamEncoder {
@@ -65,7 +64,7 @@ func (e *OpenAIStreamEncoder) Encode(event StreamEvent) string {
 			e.started = true
 		}
 		tc := map[string]any{
-			"index": e.toolCallIndex,
+			"index": event.ToolCallIndex,
 			"id":    event.ToolCallID,
 			"type":  "function",
 			"function": map[string]any{
@@ -80,14 +79,12 @@ func (e *OpenAIStreamEncoder) Encode(event StreamEvent) string {
 			break
 		}
 		tc := map[string]any{
-			"index":    e.toolCallIndex,
+			"index":    event.ToolCallIndex,
 			"function": map[string]any{"arguments": event.ArgumentsDelta},
 		}
 		lines = append(lines, e.chunk(map[string]any{"tool_calls": []any{tc}}, nil))
 
 	case EventToolCallEnd:
-		e.toolCallIndex++
-
 	case EventMessageStop:
 		finishReason := denormalizeOpenAIStopReason(event.StopReason)
 		lines = append(lines, e.chunk(map[string]any{}, &finishReason))

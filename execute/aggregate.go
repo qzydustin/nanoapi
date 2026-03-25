@@ -22,9 +22,10 @@ type StreamAggregateState struct {
 
 // toolCallState tracks a single tool call being accumulated from streaming.
 type toolCallState struct {
-	id   string
-	name string
-	args strings.Builder
+	index int
+	id    string
+	name  string
+	args  strings.Builder
 }
 
 // Apply processes a single stream event into the aggregate state.
@@ -45,12 +46,16 @@ func (s *StreamAggregateState) Apply(event codec.StreamEvent) {
 		s.thinkingParts = append(s.thinkingParts, event.Text)
 	case codec.EventToolCallStart:
 		s.toolCalls = append(s.toolCalls, &toolCallState{
-			id:   event.ToolCallID,
-			name: event.ToolCallName,
+			index: event.ToolCallIndex,
+			id:    event.ToolCallID,
+			name:  event.ToolCallName,
 		})
 	case codec.EventToolCallDelta:
-		if len(s.toolCalls) > 0 {
-			s.toolCalls[len(s.toolCalls)-1].args.WriteString(event.ArgumentsDelta)
+		for i := len(s.toolCalls) - 1; i >= 0; i-- {
+			if s.toolCalls[i].index == event.ToolCallIndex {
+				s.toolCalls[i].args.WriteString(event.ArgumentsDelta)
+				break
+			}
 		}
 	case codec.EventToolCallEnd:
 	case codec.EventMessageStop:

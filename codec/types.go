@@ -157,9 +157,10 @@ type StreamEvent struct {
 	// thinking_signature
 	Signature string
 
-	// tool_call_start
-	ToolCallID   string
-	ToolCallName string
+	// tool_call_start / tool_call_delta
+	ToolCallIndex int
+	ToolCallID    string
+	ToolCallName  string
 
 	// tool_call_delta
 	ArgumentsDelta string

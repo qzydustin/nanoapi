@@ -104,16 +104,18 @@ func DecodeOpenAIStreamLine(line string) ([]StreamEvent, bool, error) {
 		for _, tc := range d.ToolCalls {
 			if tc.ID != "" {
 				events = append(events, StreamEvent{
-					Type:         EventToolCallStart,
-					ToolCallID:   tc.ID,
-					ToolCallName: tc.Function.Name,
-					ResponseID:   chunk.ID,
-					Model:        chunk.Model,
+					Type:          EventToolCallStart,
+					ToolCallIndex: tc.Index,
+					ToolCallID:    tc.ID,
+					ToolCallName:  tc.Function.Name,
+					ResponseID:    chunk.ID,
+					Model:         chunk.Model,
 				})
 			}
 			if tc.Function.Arguments != "" {
 				events = append(events, StreamEvent{
 					Type:           EventToolCallDelta,
+					ToolCallIndex:  tc.Index,
 					ArgumentsDelta: tc.Function.Arguments,
 					ResponseID:     chunk.ID,
 					Model:          chunk.Model,

@@ -14,6 +14,8 @@ type AnthropicStreamEncoder struct {
 	stopReason          string
 	usage               *Usage
 	messageDeltaEmitted bool
+	// toolCallBlocks maps ToolCallIndex to Anthropic blockIdx.
+	toolCallBlocks map[int]int
 }
 
 // NewAnthropicStreamEncoder creates a new encoder for client-side Anthropic SSE.
@@ -84,6 +86,10 @@ func (e *AnthropicStreamEncoder) Encode(event StreamEvent) string {
 
 	case EventToolCallStart:
 		e.closeBlock(&lines)
+		if e.toolCallBlocks == nil {
+			e.toolCallBlocks = make(map[int]int)
+		}
+		e.toolCallBlocks[event.ToolCallIndex] = e.blockIdx
 		start := map[string]any{
 			"type":  "content_block_start",
 			"index": e.blockIdx,
@@ -96,9 +102,13 @@ func (e *AnthropicStreamEncoder) Encode(event StreamEvent) string {
 		e.blockOpen = true
 
 	case EventToolCallDelta:
+		idx := e.blockIdx
+		if mapped, ok := e.toolCallBlocks[event.ToolCallIndex]; ok {
+			idx = mapped
+		}
 		delta := map[string]any{
 			"type":  "content_block_delta",
-			"index": e.blockIdx,
+			"index": idx,
 			"delta": map[string]any{"type": "input_json_delta", "partial_json": event.ArgumentsDelta},
 		}
 		lines = append(lines, anthropicSSE("content_block_delta", delta))
