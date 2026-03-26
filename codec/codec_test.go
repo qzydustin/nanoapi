@@ -665,6 +665,72 @@ func TestEncodeOpenAI_SkipsAssistantThinkingOnlyMessage(t *testing.T) {
 	}
 }
 
+func TestEncodeOpenAI_ConvertsTrailingAssistantPrefillToUser(t *testing.T) {
+	req := &Request{
+		Messages: []Message{
+			{Role: "user", Content: []ContentBlock{
+				{Type: "text", Text: strPtr("hello")},
+			}},
+			{Role: "assistant", Content: []ContentBlock{
+				{Type: "text", Text: strPtr("{")},
+			}},
+		},
+	}
+
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	msgs := raw["messages"].([]any)
+	if len(msgs) != 2 {
+		t.Fatalf("messages count = %d, want 2 (message preserved)", len(msgs))
+	}
+	last := msgs[1].(map[string]any)
+	if last["role"] != "user" {
+		t.Fatalf("last role = %v, want user (converted from assistant)", last["role"])
+	}
+	if last["content"] != "{" {
+		t.Fatalf("content = %v, want {", last["content"])
+	}
+}
+
+func TestEncodeOpenAI_KeepsTrailingAssistantWithToolCalls(t *testing.T) {
+	req := &Request{
+		Messages: []Message{
+			{Role: "user", Content: []ContentBlock{
+				{Type: "text", Text: strPtr("hello")},
+			}},
+			{Role: "assistant", Content: []ContentBlock{
+				{Type: "tool_call", ToolCall: &ToolCall{
+					ID: "tc_1", Name: "get_weather",
+					Arguments: map[string]any{"location": "NYC"},
+				}},
+			}},
+		},
+	}
+
+	body, err := EncodeOpenAIRequest(req, "gpt-4o", false, nil)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	msgs := raw["messages"].([]any)
+	if len(msgs) != 2 {
+		t.Fatalf("messages count = %d, want 2 (assistant with tool_calls kept)", len(msgs))
+	}
+	if msgs[1].(map[string]any)["role"] != "assistant" {
+		t.Fatalf("role = %v, want assistant", msgs[1].(map[string]any)["role"])
+	}
+}
 
 func TestEncodeOpenAI_ReasoningEffort(t *testing.T) {
 	req := &Request{

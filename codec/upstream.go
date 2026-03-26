@@ -164,6 +164,14 @@ func EncodeOpenAIRequest(req *Request, upstreamModel string, stream bool, capabi
 		out.Messages = append(out.Messages, msg...)
 	}
 
+	// Bedrock rejects trailing assistant messages (prefill not supported).
+	// Re-role to "user" instead of dropping, so the content is preserved.
+	if n := len(out.Messages); n > 0 {
+		if last := &out.Messages[n-1]; last.Role == "assistant" && len(last.ToolCalls) == 0 {
+			last.Role = "user"
+		}
+	}
+
 	// Some OpenAI-compatible backends (e.g. LiteLLM/Bedrock) reject historical
 	// tool_calls unless the request also includes a tools definition. When the
 	// conversation contains prior tool calls but this turn has no tool defs,
