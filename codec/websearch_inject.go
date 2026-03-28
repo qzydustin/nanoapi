@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"strings"
 )
 
 func webSearchToolID() string {
@@ -71,6 +72,24 @@ func SynthesizeWebSearchBlocks(results []WebSearchResult) ContentBlock {
 		WebSearchToolUseID: webSearchToolID(),
 		WebSearchResults:   append([]WebSearchResult(nil), results...),
 	}
+}
+
+// FormatWebSearchFooter formats web search results as a text footer for
+// appending to OpenAI chat completion content.
+func FormatWebSearchFooter(results []WebSearchResult) string {
+	if len(results) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\n---\nSources:")
+	for i, r := range results {
+		if r.Title != "" {
+			fmt.Fprintf(&b, "\n[%d] %s — %s", i+1, r.Title, r.URL)
+		} else {
+			fmt.Fprintf(&b, "\n[%d] %s", i+1, r.URL)
+		}
+	}
+	return b.String()
 }
 
 // SynthesizeWebSearchSSE returns a canonical stream event for synthetic web

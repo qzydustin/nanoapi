@@ -136,3 +136,21 @@ func TestEncodeAnthropicClientResponse_WebSearch(t *testing.T) {
 		t.Errorf("content[2].type = %v, want text", b2["type"])
 	}
 }
+
+func TestFormatWebSearchFooter(t *testing.T) {
+	results := []WebSearchResult{
+		{URL: "https://weather.gov", Title: "Weather"},
+		{URL: "https://kold.com", Title: ""},
+	}
+	got := FormatWebSearchFooter(results)
+	want := "\n\n---\nSources:\n[1] Weather — https://weather.gov\n[2] https://kold.com"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestFormatWebSearchFooter_Empty(t *testing.T) {
+	if got := FormatWebSearchFooter(nil); got != "" {
+		t.Fatalf("got %q, want empty", got)
+	}
+}

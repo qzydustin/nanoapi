@@ -114,6 +114,14 @@ func OpenAIProxyHandler(
 
 		originalParams := req.Params.Clone()
 
+		hasWebSearch := false
+		for _, t := range req.Tools {
+			if t.Type == "web_search" {
+				hasWebSearch = true
+				break
+			}
+		}
+
 		var lastStatusCode int
 		var lastErrMsg string
 
@@ -189,10 +197,10 @@ func OpenAIProxyHandler(
 
 			switch mode {
 			case execute.ModeDirectNonStream, execute.ModeAggregateStream:
-				outcome = handleOpenAINonStreamResponse(c, req.ClientModel, clientResponseID, result, reqLog)
+				outcome = handleOpenAINonStreamResponse(c, req.ClientModel, clientResponseID, hasWebSearch, result, reqLog)
 
 			case execute.ModePassthroughStream:
-				outcome = handleOpenAIPassthroughStream(c, req.ClientModel, clientResponseID, result, reqLog)
+				outcome = handleOpenAIPassthroughStream(c, req.ClientModel, clientResponseID, hasWebSearch, result, reqLog)
 			}
 
 			// Cancel context after response handling (not before), so passthrough
@@ -225,11 +233,13 @@ func OpenAIProxyHandler(
 	}
 }
 
-func handleOpenAINonStreamResponse(c *gin.Context, clientModel string, clientResponseID string, result *execute.ExecutionResult, reqLog *debugLog) *handlerOutcome {
+func handleOpenAINonStreamResponse(c *gin.Context, clientModel string, clientResponseID string, hasWebSearch bool, result *execute.ExecutionResult, reqLog *debugLog) *handlerOutcome {
 	var resp *codec.Response
+	var webSearchResults []codec.WebSearchResult
 
 	if result.AggregatedResponse != nil {
 		resp = result.AggregatedResponse
+		webSearchResults = result.WebSearchResults
 		if reqLog != nil {
 			lines := []string{"mode: aggregate_stream"}
 			lines = append(lines, formatStreamStatsLines(result.StreamStats)...)
@@ -242,6 +252,7 @@ func handleOpenAINonStreamResponse(c *gin.Context, clientModel string, clientRes
 			respondOpenAIError(c, http.StatusBadGateway, "decode upstream response: "+err.Error())
 			return &handlerOutcome{StreamStats: result.StreamStats}
 		}
+		webSearchResults = codec.ParseOpenWebUISources(string(result.Body))
 		reqLog.section(
 			"upstream_response_full",
 			fmt.Sprintf("status: %d", result.StatusCode),
@@ -256,6 +267,7 @@ func handleOpenAINonStreamResponse(c *gin.Context, clientModel string, clientRes
 		return &handlerOutcome{StreamStats: result.StreamStats}
 	}
 
+	appendWebSearchFooter(resp, hasWebSearch, webSearchResults)
 	codec.NormalizeResponse(resp, clientResponseID, clientModel)
 
 	clientBody, err := codec.EncodeOpenAIClientResponse(resp)
@@ -271,7 +283,7 @@ func handleOpenAINonStreamResponse(c *gin.Context, clientModel string, clientRes
 	}
 }
 
-func handleOpenAIPassthroughStream(c *gin.Context, clientModel string, clientResponseID string, result *execute.ExecutionResult, reqLog *debugLog) *handlerOutcome {
+func handleOpenAIPassthroughStream(c *gin.Context, clientModel string, clientResponseID string, hasWebSearch bool, result *execute.ExecutionResult, reqLog *debugLog) *handlerOutcome {
 	if result.StreamReader == nil {
 		respondOpenAIError(c, http.StatusBadGateway, "no stream reader")
 		return &handlerOutcome{}
@@ -290,7 +302,7 @@ func handleOpenAIPassthroughStream(c *gin.Context, clientModel string, clientRes
 	scanner := bufio.NewScanner(result.StreamReader)
 	scanner.Buffer(make([]byte, 0, 64*1024), execute.MaxSSELineSize)
 
-	return streamOpenAIToOpenAIClient(scanner, flusher, c.Writer, clientModel, clientResponseID, reqLog, execute.NewStreamStatsTracker(result.StartedAt))
+	return streamOpenAIToOpenAIClient(scanner, flusher, c.Writer, clientModel, clientResponseID, hasWebSearch, reqLog, execute.NewStreamStatsTracker(result.StartedAt))
 }
 
 func streamOpenAIToOpenAIClient(
@@ -299,10 +311,12 @@ func streamOpenAIToOpenAIClient(
 	w io.Writer,
 	clientModel string,
 	clientResponseID string,
+	hasWebSearch bool,
 	reqLog *debugLog,
 	tracker *execute.StreamStatsTracker,
 ) *handlerOutcome {
 	var usageResult *codec.Usage
+	var webSearchResults []codec.WebSearchResult
 
 	enc := codec.NewOpenAIStreamEncoder()
 
@@ -312,6 +326,12 @@ func streamOpenAIToOpenAIClient(
 		if reqLog != nil {
 			reqLog.section("upstream_stream_full", line)
 		}
+		if hasWebSearch && strings.HasPrefix(line, "data: ") {
+			if results := codec.ParseOpenWebUISources(strings.TrimPrefix(line, "data: ")); results != nil {
+				webSearchResults = results
+				continue
+			}
+		}
 		events, done, err := codec.DecodeOpenAIStreamLine(line)
 		if err != nil {
 			slog.Error(formatLogLine("error", formatLogKV("message", "decode upstream stream line: "+err.Error())))
@@ -320,6 +340,17 @@ func streamOpenAIToOpenAIClient(
 		for _, ev := range events {
 			if ev.Type == codec.EventUsageFinal && ev.Usage != nil {
 				usageResult = ev.Usage
+			}
+			if ev.Type == codec.EventMessageStop {
+				if footer := codec.FormatWebSearchFooter(webSearchResults); footer != "" {
+					footerEv := codec.NormalizeStreamEvent(codec.StreamEvent{
+						Type: codec.EventTextDelta, Text: footer,
+					}, clientResponseID, clientModel)
+					if sseData := enc.Encode(footerEv); sseData != "" {
+						fmt.Fprint(w, sseData)
+						flusher.Flush()
+					}
+				}
 			}
 			ev = codec.NormalizeStreamEvent(ev, clientResponseID, clientModel)
 			if sseData := enc.Encode(ev); sseData != "" {
@@ -372,4 +403,23 @@ func openAIErrorType(status int) string {
 	default:
 		return "invalid_request_error"
 	}
+}
+
+// appendWebSearchFooter appends web search source URLs to the first text
+// content block so OpenAI-format clients can see citation sources.
+func appendWebSearchFooter(resp *codec.Response, hasWebSearch bool, results []codec.WebSearchResult) {
+	if !hasWebSearch || len(results) == 0 || len(resp.Output) == 0 {
+		return
+	}
+	footer := codec.FormatWebSearchFooter(results)
+	for i, b := range resp.Output[0].Content {
+		if b.Type == "text" && b.Text != nil {
+			appended := *b.Text + footer
+			resp.Output[0].Content[i].Text = &appended
+			return
+		}
+	}
+	resp.Output[0].Content = append(resp.Output[0].Content, codec.ContentBlock{
+		Type: "text", Text: &footer,
+	})
 }
